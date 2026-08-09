@@ -39,6 +39,19 @@
       },
       "required": ["type", "template", "namesList", "status"]
     },
+    "videos": {
+      "title": "Video",
+      "description": "Video stream links and analytics",
+      "type": "object",
+      "properties": {
+        "page_url": { "type": "string" },
+        "direct_url": { "type": "string" },
+        "is_active": { "type": "boolean" },
+        "created_at": { "type": "string", "format": "date-time" },
+        "views": { "type": "number" }
+      },
+      "required": ["direct_url", "is_active", "views"]
+    },
     "daily_analytics": {
       "title": "Daily Analytics",
       "description": "Daily aggregated traffic analytics keyed by YYYY-MM-DD",

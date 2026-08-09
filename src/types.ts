@@ -23,6 +23,15 @@ export type NotificationType = 'instant' | 'daily';
 export type ScheduleType = 'fixed' | 'random';
 export type NotificationStatus = 'active' | 'paused';
 
+export interface VideoDocument {
+  id: string;
+  page_url?: string;
+  direct_url: string;
+  is_active: boolean;
+  created_at: Timestamp | Date | number | any;
+  views: number;
+}
+
 export interface NotificationDocument {
   id: string; // Auto-generated string
   type: NotificationType; // "instant" | "daily"

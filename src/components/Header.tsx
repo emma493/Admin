@@ -3,7 +3,7 @@ import { Sun, Moon, Menu, X } from 'lucide-react';
 import { ThemeMode } from '../types';
 
 interface HeaderProps {
-  activeTab: 'dashboard' | 'analytics' | 'users' | 'notifications';
+  activeTab: 'dashboard' | 'analytics' | 'users' | 'notifications' | 'videos';
   totalUsersCount: number;
   theme: ThemeMode;
   onToggleTheme: () => void;
@@ -57,6 +57,8 @@ export const Header: React.FC<HeaderProps> = ({
                 ? 'Analytics'
                 : activeTab === 'notifications'
                 ? 'Notifications'
+                : activeTab === 'videos'
+                ? 'Videos Manager'
                 : 'Users Directory'}
             </h1>
             <span

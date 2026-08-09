@@ -28,6 +28,7 @@ import {
   NotificationType,
   ScheduleType,
   NotificationStatus,
+  VideoDocument,
 } from '../types';
 import { getFormattedDate } from './utils';
 
@@ -48,6 +49,7 @@ const USERS_COLLECTION = 'users';
 const DAILY_ANALYTICS_COLLECTION = 'daily_analytics';
 const ADMIN_ANALYTICS_COLLECTION = 'admin_analytics';
 const NOTIFICATIONS_COLLECTION = 'notifications';
+const VIDEOS_COLLECTION = 'videos';
 const APP_STATS_DOC = 'app_stats';
 
 export enum OperationType {
@@ -308,6 +310,89 @@ export async function toggleUserNotificationSubscribed(userId: string, currentSu
     await updateDoc(docRef, { notificationsSubscribed: !currentSubscribed });
   } catch (err) {
     handleFirestoreError(err, OperationType.UPDATE, `${USERS_COLLECTION}/${userId}`);
+    throw err;
+  }
+}
+
+/**
+ * Subscribe in real-time to all videos in Firestore
+ */
+export function subscribeToVideos(
+  onData: (videos: VideoDocument[]) => void,
+  onError?: (err: Error) => void
+) {
+  const videosRef = collection(db, VIDEOS_COLLECTION);
+  return onSnapshot(
+    videosRef,
+    (snapshot) => {
+      const items: VideoDocument[] = snapshot.docs.map((docSnap) => {
+        const data = docSnap.data();
+        return {
+          id: docSnap.id,
+          page_url: data.page_url || '',
+          direct_url: data.direct_url || '',
+          is_active: typeof data.is_active === 'boolean' ? data.is_active : true,
+          created_at: data.created_at || new Date(),
+          views: typeof data.views === 'number' ? data.views : 0,
+        };
+      });
+      onData(items);
+    },
+    (err) => {
+      handleFirestoreError(err, OperationType.LIST, VIDEOS_COLLECTION);
+      if (onError) onError(err);
+    }
+  );
+}
+
+/**
+ * Save or update a video document in Firestore
+ */
+export async function saveVideoDoc(videoData: Omit<VideoDocument, 'id'> & { id?: string }): Promise<string> {
+  try {
+    const isUpdate = !!videoData.id;
+    const docRef = isUpdate
+      ? doc(db, VIDEOS_COLLECTION, videoData.id!)
+      : doc(collection(db, VIDEOS_COLLECTION));
+
+    const payload: Record<string, any> = {
+      page_url: videoData.page_url || '',
+      direct_url: videoData.direct_url || '',
+      is_active: typeof videoData.is_active === 'boolean' ? videoData.is_active : true,
+      views: typeof videoData.views === 'number' ? videoData.views : 0,
+      created_at: videoData.created_at ? videoData.created_at : serverTimestamp(),
+    };
+
+    await setDoc(docRef, payload, { merge: true });
+    return docRef.id;
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, VIDEOS_COLLECTION);
+    throw err;
+  }
+}
+
+/**
+ * Delete a video from Firestore
+ */
+export async function deleteVideoDoc(id: string): Promise<void> {
+  try {
+    const docRef = doc(db, VIDEOS_COLLECTION, id);
+    await deleteDoc(docRef);
+  } catch (err) {
+    handleFirestoreError(err, OperationType.DELETE, `${VIDEOS_COLLECTION}/${id}`);
+    throw err;
+  }
+}
+
+/**
+ * Toggle video is_active status
+ */
+export async function toggleVideoStatus(id: string, currentIsActive: boolean): Promise<void> {
+  try {
+    const docRef = doc(db, VIDEOS_COLLECTION, id);
+    await updateDoc(docRef, { is_active: !currentIsActive });
+  } catch (err) {
+    handleFirestoreError(err, OperationType.UPDATE, `${VIDEOS_COLLECTION}/${id}`);
     throw err;
   }
 }

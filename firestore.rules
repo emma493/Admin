@@ -13,5 +13,8 @@ service cloud.firestore {
     match /notifications/{notificationId} {
       allow read, write: if true;
     }
+    match /videos/{videoId} {
+      allow read, write: if true;
+    }
   }
 }

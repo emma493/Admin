@@ -14,6 +14,10 @@ import {
   deleteNotificationDoc,
   toggleNotificationStatus,
   toggleUserNotificationSubscribed,
+  subscribeToVideos,
+  saveVideoDoc,
+  deleteVideoDoc,
+  toggleVideoStatus,
   trackAppDownload,
   saveUserDoc,
   toggleUserStatus,
@@ -26,6 +30,7 @@ import {
   DailyAnalyticsDocument,
   AdminAnalyticsDocument,
   NotificationDocument,
+  VideoDocument,
   LiveActivityEvent,
   DeviceType,
   ThemeMode,
@@ -37,6 +42,7 @@ import { DashboardTab } from './components/DashboardTab';
 import { AnalyticsTab } from './components/AnalyticsTab';
 import { UsersTab } from './components/UsersTab';
 import { NotificationsTab } from './components/NotificationsTab';
+import { VideosTab } from './components/VideosTab';
 import { UserDetailModal } from './components/UserDetailModal';
 import { AddUserModal } from './components/AddUserModal';
 import { RealTimeTrackerStatus } from './components/LiveSimulatorBar';
@@ -46,7 +52,7 @@ import { MobileNav } from './components/MobileNav';
 import { DateRangeState } from './types';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'analytics' | 'users' | 'notifications'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'analytics' | 'users' | 'notifications' | 'videos'>('dashboard');
   const [theme, setTheme] = useState<ThemeMode>('dark');
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState<boolean>(false);
@@ -63,6 +69,7 @@ export default function App() {
   const [allDailyAnalytics, setAllDailyAnalytics] = useState<DailyAnalyticsDocument[]>([]);
   const [adminAnalytics, setAdminAnalytics] = useState<AdminAnalyticsDocument | null>(null);
   const [notifications, setNotifications] = useState<NotificationDocument[]>([]);
+  const [videos, setVideos] = useState<VideoDocument[]>([]);
 
   const [firestoreConnected, setFirestoreConnected] = useState<boolean>(false);
 
@@ -171,6 +178,15 @@ export default function App() {
     });
 
     return () => unsubscribeNotifications();
+  }, []);
+
+  // 7. Subscribe to Real Firestore Videos Collection
+  useEffect(() => {
+    const unsubscribeVideos = subscribeToVideos((list) => {
+      setVideos(list);
+    });
+
+    return () => unsubscribeVideos();
   }, []);
 
   // Handler to download app.apk and increment install metrics in Firestore
@@ -363,6 +379,44 @@ export default function App() {
                   'Desktop',
                   'STATUS_CHANGE',
                   `Notification status toggled from ${currentStatus}`
+                );
+              }}
+              theme={theme}
+            />
+          )}
+
+          {/* TAB 5: VIDEOS TAB */}
+          {activeTab === 'videos' && (
+            <VideosTab
+              videos={videos}
+              onSaveVideo={async (data) => {
+                await saveVideoDoc(data);
+                addActivityEvent(
+                  'ADMIN',
+                  'GH',
+                  'Desktop',
+                  'PING',
+                  `Saved video stream document`
+                );
+              }}
+              onDeleteVideo={async (id) => {
+                await deleteVideoDoc(id);
+                addActivityEvent(
+                  'ADMIN',
+                  'GH',
+                  'Desktop',
+                  'PING',
+                  `Deleted video stream document`
+                );
+              }}
+              onToggleVideoStatus={async (id, currentIsActive) => {
+                await toggleVideoStatus(id, currentIsActive);
+                addActivityEvent(
+                  'ADMIN',
+                  'GH',
+                  'Desktop',
+                  'STATUS_CHANGE',
+                  `Video status toggled to ${!currentIsActive}`
                 );
               }}
               theme={theme}

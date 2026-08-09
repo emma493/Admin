@@ -4,6 +4,7 @@ import {
   BarChart3,
   Users,
   Bell,
+  Video,
   Menu,
   X,
   ChevronLeft,
@@ -12,8 +13,8 @@ import {
 import { BrandLogo } from './LogosAndFlags';
 
 interface SidebarProps {
-  activeTab: 'dashboard' | 'analytics' | 'users' | 'notifications';
-  setActiveTab: (tab: 'dashboard' | 'analytics' | 'users' | 'notifications') => void;
+  activeTab: 'dashboard' | 'analytics' | 'users' | 'notifications' | 'videos';
+  setActiveTab: (tab: 'dashboard' | 'analytics' | 'users' | 'notifications' | 'videos') => void;
   onlineCount: number;
   totalUsersCount: number;
   firestoreConnected: boolean;
@@ -193,6 +194,27 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 <div className="flex items-center gap-2.5">
                   <Bell className="w-4 h-4 flex-shrink-0 text-red-400" />
                   {(!isCollapsed || isMobileOpen) && <span>Notifications</span>}
+                </div>
+              </button>
+
+              {/* Videos */}
+              <button
+                onClick={() => {
+                  setActiveTab('videos');
+                  if (onCloseMobile) onCloseMobile();
+                }}
+                title="Videos"
+                className={`w-full flex items-center ${
+                  isCollapsed && !isMobileOpen ? 'justify-center px-0 py-3' : 'justify-between px-3.5 py-2.5'
+                } rounded-xl text-xs font-bold transition-all ${
+                  activeTab === 'videos'
+                    ? 'bg-red-600 text-white shadow-md shadow-red-600/20'
+                    : 'text-zinc-400 hover:text-white hover:bg-zinc-900'
+                }`}
+              >
+                <div className="flex items-center gap-2.5">
+                  <Video className="w-4 h-4 flex-shrink-0 text-red-400" />
+                  {(!isCollapsed || isMobileOpen) && <span>Videos</span>}
                 </div>
               </button>
             </nav>
