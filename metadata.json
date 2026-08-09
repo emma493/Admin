@@ -1,0 +1,6 @@
+{
+  "name": "Shortxx Admin Dashboard",
+  "description": "Real-time analytics and user monitoring admin dashboard for Shortxx connected directly to Firebase Firestore.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
