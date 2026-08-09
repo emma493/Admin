@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Video,
   Play,
@@ -17,8 +17,15 @@ import {
   Film,
   Sparkles,
   Link as LinkIcon,
+  Activity,
+  ShieldAlert,
+  RefreshCw,
+  Zap,
+  AlertTriangle,
+  FileCheck,
 } from 'lucide-react';
 import { VideoDocument, ThemeMode } from '../types';
+import { extractLinksFromString, verifyVideoLink } from '../lib/videoUtils';
 
 interface VideosTabProps {
   videos: VideoDocument[];
@@ -41,6 +48,8 @@ export const VideosTab: React.FC<VideosTabProps> = ({
   const [directUrl, setDirectUrl] = useState<string>('');
   const [pageUrl, setPageUrl] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
+  const [verifyBeforeAdd, setVerifyBeforeAdd] = useState<boolean>(true);
+  const [statusMessage, setStatusMessage] = useState<string>('');
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   // Search & Filter State
@@ -49,6 +58,12 @@ export const VideosTab: React.FC<VideosTabProps> = ({
 
   // Table Row Selection for Bulk Operations (Copy, Delete, Toggle)
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [isDeletingBatch, setIsDeletingBatch] = useState<boolean>(false);
+
+  // Video Health Checking State
+  const [healthMap, setHealthMap] = useState<Record<string, 'healthy' | 'broken' | 'checking'>>({});
+  const [isCheckingHealth, setIsCheckingHealth] = useState<boolean>(false);
+  const [autoPurgeEnabled, setAutoPurgeEnabled] = useState<boolean>(true);
 
   // Video Test Play Modal State
   const [previewVideo, setPreviewVideo] = useState<VideoDocument | null>(null);
@@ -56,21 +71,15 @@ export const VideosTab: React.FC<VideosTabProps> = ({
   // Clipboard Copied indicator state
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
-  // Parse direct links (comma or newline separated)
-  const parsedDirectUrls = directUrl
-    .split(/[\n,]+/)
-    .map((url) => url.trim())
-    .filter((url) => url.length > 0);
-
-  const parsedPageUrls = pageUrl
-    .split(/[\n,]+/)
-    .map((url) => url.trim())
-    .filter((url) => url.length > 0);
+  // Universal link extraction (handles double quotes "vid2.mp4", single quotes, commas, brackets, etc.)
+  const parsedDirectUrls = extractLinksFromString(directUrl);
+  const parsedPageUrls = extractLinksFromString(pageUrl);
 
   // Summary Metrics
   const totalVideos = videos.length;
   const activeVideos = videos.filter((v) => v.is_active).length;
   const totalViews = videos.reduce((acc, v) => acc + (v.views || 0), 0);
+  const brokenCount = Object.values(healthMap).filter((status) => status === 'broken').length;
 
   // Filtered Videos
   const filteredVideos = videos.filter((video) => {
@@ -89,6 +98,57 @@ export const VideosTab: React.FC<VideosTabProps> = ({
 
     return matchesSearch && matchesStatus;
   });
+
+  // Health Inspection & Auto-Purging function
+  const runHealthCheckAndPurge = async (autoPurge: boolean = true) => {
+    if (videos.length === 0 || isCheckingHealth) return;
+
+    setIsCheckingHealth(true);
+    setFeedback(null);
+    let purgedCount = 0;
+    let checkedCount = 0;
+
+    const newMap: Record<string, 'healthy' | 'broken' | 'checking'> = { ...healthMap };
+
+    for (const video of videos) {
+      newMap[video.id] = 'checking';
+      setHealthMap({ ...newMap });
+
+      const check = await verifyVideoLink(video.direct_url, 4000);
+      checkedCount++;
+
+      if (check.status === 'broken') {
+        newMap[video.id] = 'broken';
+        setHealthMap({ ...newMap });
+
+        if (autoPurge) {
+          try {
+            await onDeleteVideo(video.id);
+            purgedCount++;
+          } catch (err) {
+            console.error('Failed to auto-purge broken video:', video.id, err);
+          }
+        }
+      } else {
+        newMap[video.id] = 'healthy';
+        setHealthMap({ ...newMap });
+      }
+    }
+
+    setIsCheckingHealth(false);
+
+    if (purgedCount > 0) {
+      setFeedback({
+        type: 'success',
+        message: `Health Monitor: Checked ${checkedCount} streams. Automatically purged ${purgedCount} broken link${purgedCount > 1 ? 's' : ''}!`,
+      });
+    } else if (checkedCount > 0) {
+      setFeedback({
+        type: 'success',
+        message: `Health Monitor: Checked ${checkedCount} video streams. All links are healthy & operational!`,
+      });
+    }
+  };
 
   // Toggle selection for single item
   const handleToggleSelect = (id: string) => {
@@ -140,24 +200,72 @@ export const VideosTab: React.FC<VideosTabProps> = ({
     setTimeout(() => setCopiedId(null), 3000);
   };
 
-  // Handle Add Video Form Submit (Supports multiple comma/newline separated URLs)
+  // Delete all selected video documents permanently
+  const handleBatchDelete = async () => {
+    if (selectedIds.length === 0) return;
+
+    const confirmDelete = window.confirm(
+      `Are you sure you want to permanently delete ${selectedIds.length} selected video${selectedIds.length > 1 ? 's' : ''} from Firestore?`
+    );
+
+    if (!confirmDelete) return;
+
+    setIsDeletingBatch(true);
+    setFeedback(null);
+
+    try {
+      const idsToDelete = [...selectedIds];
+      await Promise.all(idsToDelete.map((id) => onDeleteVideo(id)));
+
+      setSelectedIds([]);
+      setFeedback({
+        type: 'success',
+        message: `Successfully deleted ${idsToDelete.length} video document${idsToDelete.length > 1 ? 's' : ''} from Firestore.`,
+      });
+    } catch (err) {
+      console.error('Error deleting batch videos:', err);
+      setFeedback({
+        type: 'error',
+        message: 'Failed to delete selected videos. Please try again.',
+      });
+    } finally {
+      setIsDeletingBatch(false);
+    }
+  };
+
+  // Handle Add Video Form Submit (Supports multiple comma/newline/quoted separated URLs with health testing)
   const handleAddVideo = async (e: React.FormEvent) => {
     e.preventDefault();
 
     if (parsedDirectUrls.length === 0) {
-      setFeedback({ type: 'error', message: 'Please provide at least one direct stream link.' });
+      setFeedback({ type: 'error', message: 'No valid video stream links detected in input.' });
       return;
     }
 
     setIsSubmitting(true);
     setFeedback(null);
+    setStatusMessage('');
 
     try {
-      let count = 0;
+      let addedCount = 0;
+      let skippedCount = 0;
+
       for (let i = 0; i < parsedDirectUrls.length; i++) {
         const dUrl = parsedDirectUrls[i];
         const pUrl = parsedPageUrls[i] || parsedPageUrls[0] || undefined;
 
+        if (verifyBeforeAdd) {
+          setStatusMessage(`Testing stream playability (${i + 1}/${parsedDirectUrls.length}): ${dUrl}`);
+          const health = await verifyVideoLink(dUrl, 5000);
+
+          if (health.status === 'broken') {
+            console.warn('Skipping broken link during addition:', dUrl);
+            skippedCount++;
+            continue;
+          }
+        }
+
+        setStatusMessage(`Saving video stream (${i + 1}/${parsedDirectUrls.length})...`);
         await onSaveVideo({
           direct_url: dUrl,
           page_url: pUrl,
@@ -165,27 +273,34 @@ export const VideosTab: React.FC<VideosTabProps> = ({
           views: 0,
           created_at: new Date(),
         });
-        count++;
+        addedCount++;
       }
 
-      setFeedback({
-        type: 'success',
-        message:
-          count === 1
-            ? 'Video added successfully to Firestore!'
-            : `Successfully batch-added ${count} comma-separated video streams to Firestore!`,
-      });
-
-      setDirectUrl('');
-      setPageUrl('');
+      if (addedCount > 0) {
+        setFeedback({
+          type: 'success',
+          message:
+            skippedCount > 0
+              ? `Successfully added ${addedCount} video stream${addedCount > 1 ? 's' : ''}! (${skippedCount} broken link${skippedCount > 1 ? 's were' : ' was'} automatically filtered out)`
+              : `Successfully added ${addedCount} verified video stream${addedCount > 1 ? 's' : ''} to Firestore!`,
+        });
+        setDirectUrl('');
+        setPageUrl('');
+      } else {
+        setFeedback({
+          type: 'error',
+          message: 'All submitted stream links failed playability testing and were skipped.',
+        });
+      }
     } catch (err) {
       console.error('Error adding video:', err);
       setFeedback({
         type: 'error',
-        message: 'Failed to save video(s) to Firestore. Please try again.',
+        message: 'Failed to save video(s) to Firestore. Please check connections.',
       });
     } finally {
       setIsSubmitting(false);
+      setStatusMessage('');
     }
   };
 
@@ -369,29 +484,93 @@ export const VideosTab: React.FC<VideosTabProps> = ({
             </div>
           </div>
 
-          <div className="flex items-center justify-between pt-2">
-            <span className={`text-xs font-medium ${isDark ? 'text-zinc-400' : 'text-zinc-500'}`}>
-              {parsedDirectUrls.length > 0
-                ? `Ready to insert ${parsedDirectUrls.length} video stream document${parsedDirectUrls.length > 1 ? 's' : ''}`
-                : 'Fill stream links above'}
-            </span>
+          <div className="flex items-center justify-between pt-2 flex-wrap gap-3">
+            <div className="flex items-center gap-3">
+              <label className="flex items-center gap-2 text-xs font-bold cursor-pointer select-none">
+                <input
+                  type="checkbox"
+                  checked={verifyBeforeAdd}
+                  onChange={(e) => setVerifyBeforeAdd(e.target.checked)}
+                  className="rounded border-zinc-700 text-red-600 focus:ring-red-600 bg-zinc-950"
+                />
+                <span className={isDark ? 'text-zinc-300' : 'text-zinc-700'}>
+                  Verify stream playability before adding
+                </span>
+              </label>
+
+              <span className={`text-xs font-medium ${isDark ? 'text-zinc-400' : 'text-zinc-500'}`}>
+                {parsedDirectUrls.length > 0
+                  ? `(${parsedDirectUrls.length} valid stream link${parsedDirectUrls.length > 1 ? 's' : ''} parsed)`
+                  : ''}
+              </span>
+            </div>
 
             <button
               type="submit"
               disabled={isSubmitting || parsedDirectUrls.length === 0}
               className="px-6 py-3 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-extrabold flex items-center gap-2 shadow-lg shadow-red-600/30 transition-all active:scale-95 disabled:opacity-50"
             >
-              <Plus className="w-4 h-4" />
+              {isSubmitting ? (
+                <RefreshCw className="w-4 h-4 animate-spin text-white" />
+              ) : (
+                <Plus className="w-4 h-4" />
+              )}
               <span>
                 {isSubmitting
-                  ? 'Adding Video(s)...'
+                  ? 'Processing Links...'
                   : parsedDirectUrls.length > 1
                   ? `Batch Add ${parsedDirectUrls.length} Videos`
                   : 'Add Video'}
               </span>
             </button>
           </div>
+
+          {statusMessage && (
+            <div className="p-3 bg-red-950/40 border border-red-800/60 rounded-xl text-xs font-mono text-red-300 flex items-center gap-2 animate-pulse">
+              <RefreshCw className="w-3.5 h-3.5 animate-spin text-red-400 flex-shrink-0" />
+              <span>{statusMessage}</span>
+            </div>
+          )}
         </form>
+      </div>
+
+      {/* HEALTH MONITOR & AUTO-PURGE PANEL */}
+      <div
+        className={`p-5 rounded-2xl border transition-all ${
+          isDark ? 'bg-zinc-900/90 border-zinc-800 text-white' : 'bg-white border-zinc-200 text-zinc-900'
+        }`}
+      >
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="p-2.5 rounded-xl bg-emerald-600/10 text-emerald-500 border border-emerald-600/20">
+              <Activity className="w-5 h-5 text-emerald-500" />
+            </div>
+            <div>
+              <h3 className="text-sm font-black flex items-center gap-2">
+                <span>Automated Link Health Monitor</span>
+                {brokenCount > 0 && (
+                  <span className="px-2 py-0.5 rounded-md bg-red-600 text-white text-[10px] font-extrabold">
+                    {brokenCount} Broken Detected
+                  </span>
+                )}
+              </h3>
+              <p className={`text-xs mt-0.5 ${isDark ? 'text-zinc-400' : 'text-zinc-500'}`}>
+                Scans existing stream links for 404s/network errors and automatically purges broken streams from Firestore.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-3 flex-wrap">
+            <button
+              onClick={() => runHealthCheckAndPurge(true)}
+              disabled={isCheckingHealth || videos.length === 0}
+              className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-extrabold flex items-center gap-2 shadow-sm transition-all active:scale-95 disabled:opacity-50"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${isCheckingHealth ? 'animate-spin' : ''}`} />
+              <span>{isCheckingHealth ? 'Scanning & Purging...' : 'Scan & Auto-Purge Broken Links'}</span>
+            </button>
+          </div>
+        </div>
       </div>
 
       {/* 3. VIDEOS DATA TABLE */}
@@ -488,9 +667,9 @@ export const VideosTab: React.FC<VideosTabProps> = ({
             <div className="flex items-center gap-2 flex-wrap">
               <button
                 onClick={() => handleCopyCommaSeparated('direct')}
-                className="px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-white font-extrabold flex items-center gap-1.5 shadow-sm transition-all"
+                className="px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-white font-extrabold flex items-center gap-1.5 transition-all"
               >
-                <Copy className="w-3.5 h-3.5" />
+                <Copy className="w-3.5 h-3.5 text-red-400" />
                 <span>Copy Selected Direct Links (Comma Separated)</span>
               </button>
 
@@ -498,8 +677,18 @@ export const VideosTab: React.FC<VideosTabProps> = ({
                 onClick={() => handleCopyCommaSeparated('page')}
                 className="px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-white font-extrabold flex items-center gap-1.5 transition-all"
               >
-                <ExternalLink className="w-3.5 h-3.5" />
+                <ExternalLink className="w-3.5 h-3.5 text-blue-400" />
                 <span>Copy Selected Webpage Links</span>
+              </button>
+
+              <button
+                onClick={handleBatchDelete}
+                disabled={isDeletingBatch}
+                className="px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-white font-extrabold flex items-center gap-1.5 shadow-md shadow-red-600/30 transition-all active:scale-95 disabled:opacity-50"
+                title="Permanently delete all selected videos from Firestore"
+              >
+                <Trash2 className="w-3.5 h-3.5" />
+                <span>{isDeletingBatch ? 'Deleting Selected...' : `Delete Selected (${selectedIds.length})`}</span>
               </button>
 
               <button
@@ -536,6 +725,7 @@ export const VideosTab: React.FC<VideosTabProps> = ({
                 <th className="py-3.5 px-4">Direct Stream URL</th>
                 <th className="py-3.5 px-4">Webpage URL</th>
                 <th className="py-3.5 px-4 text-center">Status</th>
+                <th className="py-3.5 px-4 text-center">Stream Health</th>
                 <th className="py-3.5 px-4 text-center">Views</th>
                 <th className="py-3.5 px-4 text-right">Actions</th>
               </tr>
@@ -652,6 +842,38 @@ export const VideosTab: React.FC<VideosTabProps> = ({
                           </span>
                         )}
                       </button>
+                    </td>
+
+                    {/* Stream Health */}
+                    <td className="py-3.5 px-4 text-center">
+                      {healthMap[video.id] === 'checking' ? (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-400 border border-amber-500/30 text-[10px] font-extrabold animate-pulse">
+                          <RefreshCw className="w-3 h-3 animate-spin" />
+                          Testing...
+                        </span>
+                      ) : healthMap[video.id] === 'healthy' ? (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-[10px] font-extrabold">
+                          <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                          Healthy
+                        </span>
+                      ) : healthMap[video.id] === 'broken' ? (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-red-600/20 text-red-400 border border-red-600/30 text-[10px] font-extrabold">
+                          <ShieldAlert className="w-3 h-3 text-red-400" />
+                          Broken Link
+                        </span>
+                      ) : (
+                        <button
+                          onClick={async () => {
+                            setHealthMap((prev) => ({ ...prev, [video.id]: 'checking' }));
+                            const res = await verifyVideoLink(video.direct_url, 4000);
+                            setHealthMap((prev) => ({ ...prev, [video.id]: res.status }));
+                          }}
+                          className="px-2 py-0.5 rounded-md bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-white text-[10px] font-extrabold border border-zinc-700 transition-all"
+                          title="Click to check link health"
+                        >
+                          Verify Link
+                        </button>
+                      )}
                     </td>
 
                     {/* Views */}
