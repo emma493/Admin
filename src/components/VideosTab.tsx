@@ -24,11 +24,13 @@ import {
   AlertTriangle,
   FileCheck,
 } from 'lucide-react';
-import { VideoDocument, ThemeMode } from '../types';
+import { VideoDocument, TelemetryEventDocument, ThemeMode } from '../types';
 import { extractLinksFromString, verifyVideoLink } from '../lib/videoUtils';
+import { incrementVideoViews, logTelemetryEvent } from '../lib/firebase';
 
 interface VideosTabProps {
   videos: VideoDocument[];
+  events?: TelemetryEventDocument[];
   onSaveVideo: (data: Omit<VideoDocument, 'id'> & { id?: string }) => Promise<void>;
   onDeleteVideo: (id: string) => Promise<void>;
   onToggleVideoStatus: (id: string, currentIsActive: boolean) => Promise<void>;
@@ -37,6 +39,7 @@ interface VideosTabProps {
 
 export const VideosTab: React.FC<VideosTabProps> = ({
   videos,
+  events,
   onSaveVideo,
   onDeleteVideo,
   onToggleVideoStatus,
@@ -75,11 +78,51 @@ export const VideosTab: React.FC<VideosTabProps> = ({
   const parsedDirectUrls = extractLinksFromString(directUrl);
   const parsedPageUrls = extractLinksFromString(pageUrl);
 
+  // View count calculation helper for each video (supports Firestore views field & telemetry event fallback)
+  const getVideoViewCount = (video: VideoDocument): number => {
+    const directViews = typeof video.views === 'number' ? video.views : 0;
+    const eventViews = events
+      ? events.filter(
+          (e) =>
+            (e.event_type?.toLowerCase() === 'video_view' || e.event_type?.toLowerCase() === 'page_view') &&
+            (e.video_id === video.id ||
+              e.video_id === video.direct_url ||
+              e.video_id === video.page_url ||
+              (e.details && e.details.includes(video.id)))
+        ).length
+      : 0;
+    return Math.max(directViews, eventViews);
+  };
+
   // Summary Metrics
   const totalVideos = videos.length;
   const activeVideos = videos.filter((v) => v.is_active).length;
-  const totalViews = videos.reduce((acc, v) => acc + (v.views || 0), 0);
+  const totalViewsAcrossVideos = videos.reduce((acc, v) => acc + getVideoViewCount(v), 0);
+  const totalVideoViewEvents = events
+    ? events.filter(
+        (e) => e.event_type?.toLowerCase() === 'video_view' || e.event_type?.toLowerCase() === 'page_view'
+      ).length
+    : 0;
+  const totalViews = Math.max(totalViewsAcrossVideos, totalVideoViewEvents);
   const brokenCount = Object.values(healthMap).filter((status) => status === 'broken').length;
+
+  // Handle Test Play video with instant view count increment
+  const handleTestPlayVideo = async (video: VideoDocument) => {
+    setPreviewVideo(video);
+    try {
+      await incrementVideoViews(video.id);
+      await logTelemetryEvent({
+        event_type: 'video_view',
+        userId: 'ADMIN_TESTER',
+        timestamp: new Date(),
+        device_type: 'Desktop',
+        video_id: video.id,
+        details: `Admin test played stream: ${video.id}`,
+      });
+    } catch (err) {
+      console.warn('Error recording test play video view:', err);
+    }
+  };
 
   // Filtered Videos
   const filteredVideos = videos.filter((video) => {
@@ -880,7 +923,7 @@ export const VideosTab: React.FC<VideosTabProps> = ({
                     <td className="py-3.5 px-4 text-center font-mono font-bold text-xs text-blue-500">
                       <span className="inline-flex items-center gap-1">
                         <Eye className="w-3.5 h-3.5" />
-                        {video.views || 0}
+                        {getVideoViewCount(video).toLocaleString()}
                       </span>
                     </td>
 
@@ -889,7 +932,7 @@ export const VideosTab: React.FC<VideosTabProps> = ({
                       <div className="flex items-center justify-end gap-1.5">
                         {/* Test Play Button */}
                         <button
-                          onClick={() => setPreviewVideo(video)}
+                          onClick={() => handleTestPlayVideo(video)}
                           title="Test Play Stream"
                           className="px-2.5 py-1 rounded-lg bg-red-600 hover:bg-red-700 text-white font-extrabold flex items-center gap-1 shadow-sm transition-all active:scale-95 text-[11px]"
                         >

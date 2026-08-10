@@ -19,6 +19,23 @@
       },
       "required": ["userId", "country", "deviceType", "trafficSource", "status", "totalDurationSeconds"]
     },
+    "events": {
+      "title": "Telemetry Event",
+      "description": "User interaction, video telemetry, and app download events",
+      "type": "object",
+      "properties": {
+        "event_type": { "type": "string" },
+        "userId": { "type": "string" },
+        "timestamp": { "type": "string", "format": "date-time" },
+        "user_agent": { "type": "string" },
+        "device_type": { "type": "string" },
+        "video_id": { "type": "string" },
+        "referrer": { "type": "string" },
+        "country": { "type": "string" },
+        "details": { "type": "string" }
+      },
+      "required": ["event_type", "userId", "device_type"]
+    },
     "notifications": {
       "title": "Notification",
       "description": "Instant and scheduled notification templates",

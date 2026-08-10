@@ -14,6 +14,7 @@ import {
   increment,
   Timestamp,
   query,
+  where,
   orderBy,
   limit,
   setLogLevel
@@ -22,6 +23,7 @@ import firebaseConfig from '../../firebase-applet-config.json';
 import {
   UserDocument,
   DailyAnalyticsDocument,
+  AdminAnalyticsDocument,
   DeviceType,
   UserStatus,
   NotificationDocument,
@@ -29,6 +31,7 @@ import {
   ScheduleType,
   NotificationStatus,
   VideoDocument,
+  TelemetryEventDocument,
 } from '../types';
 import { getFormattedDate } from './utils';
 
@@ -46,6 +49,7 @@ export const db = getFirestore(
 
 // Collection References
 const USERS_COLLECTION = 'users';
+const EVENTS_COLLECTION = 'events';
 const DAILY_ANALYTICS_COLLECTION = 'daily_analytics';
 const ADMIN_ANALYTICS_COLLECTION = 'admin_analytics';
 const NOTIFICATIONS_COLLECTION = 'notifications';
@@ -396,8 +400,48 @@ export async function toggleVideoStatus(id: string, currentIsActive: boolean): P
     throw err;
   }
 }
+
+/**
+ * Perform atomic increment (FieldValue.increment(1)) on the views field
+ * inside the specific videos document in Firestore.
+ */
+export async function incrementVideoViews(videoIdOrUrl: string): Promise<void> {
+  if (!videoIdOrUrl) return;
+  try {
+    // 1. Check if videoIdOrUrl matches a document ID directly
+    const directRef = doc(db, VIDEOS_COLLECTION, videoIdOrUrl);
+    const directSnap = await getDoc(directRef);
+    if (directSnap.exists()) {
+      await updateDoc(directRef, { views: increment(1) });
+      return;
+    }
+
+    // 2. Search for matching direct_url or page_url
+    const videosRef = collection(db, VIDEOS_COLLECTION);
+    const qDirect = query(videosRef, where('direct_url', '==', videoIdOrUrl));
+    const directQuerySnap = await getDocs(qDirect);
+    if (!directQuerySnap.empty) {
+      const matchDoc = directQuerySnap.docs[0];
+      await updateDoc(doc(db, VIDEOS_COLLECTION, matchDoc.id), { views: increment(1) });
+      return;
+    }
+
+    const qPage = query(videosRef, where('page_url', '==', videoIdOrUrl));
+    const pageQuerySnap = await getDocs(qPage);
+    if (!pageQuerySnap.empty) {
+      const matchDoc = pageQuerySnap.docs[0];
+      await updateDoc(doc(db, VIDEOS_COLLECTION, matchDoc.id), { views: increment(1) });
+      return;
+    }
+
+    // 3. Fallback: If doc doesn't exist yet, merge views increment into videoIdOrUrl
+    await setDoc(directRef, { views: increment(1), is_active: true, created_at: serverTimestamp() }, { merge: true });
+  } catch (err) {
+    console.warn('Error incrementing video views:', videoIdOrUrl, err);
+  }
+}
 export function subscribeToAdminAnalytics(
-  onData: (data: { totalAppInstalls: number }) => void,
+  onData: (data: AdminAnalyticsDocument) => void,
   onError?: (err: Error) => void
 ) {
   const docRef = doc(db, ADMIN_ANALYTICS_COLLECTION, APP_STATS_DOC);
@@ -408,13 +452,31 @@ export function subscribeToAdminAnalytics(
         const data = snapshot.data();
         onData({
           totalAppInstalls: typeof data.totalAppInstalls === 'number' ? data.totalAppInstalls : 0,
+          totalGetAppClicks: typeof data.totalGetAppClicks === 'number' ? data.totalGetAppClicks : (data.totalAppInstalls || 0),
+          totalUnmutes: typeof data.totalUnmutes === 'number' ? data.totalUnmutes : 0,
+          totalHearts: typeof data.totalHearts === 'number' ? data.totalHearts : 0,
+          totalProgressDrags: typeof data.totalProgressDrags === 'number' ? data.totalProgressDrags : 0,
         });
       } else {
         // Doc doesn't exist yet, seed initial 0
-        setDoc(docRef, { totalAppInstalls: 0 }, { merge: true }).catch((e) =>
-          console.warn('Init app_stats error:', e)
-        );
-        onData({ totalAppInstalls: 0 });
+        setDoc(
+          docRef,
+          {
+            totalAppInstalls: 0,
+            totalGetAppClicks: 0,
+            totalUnmutes: 0,
+            totalHearts: 0,
+            totalProgressDrags: 0,
+          },
+          { merge: true }
+        ).catch((e) => console.warn('Init app_stats error:', e));
+        onData({
+          totalAppInstalls: 0,
+          totalGetAppClicks: 0,
+          totalUnmutes: 0,
+          totalHearts: 0,
+          totalProgressDrags: 0,
+        });
       }
     },
     (err) => {
@@ -425,21 +487,132 @@ export function subscribeToAdminAnalytics(
 }
 
 /**
- * Track an APK download by incrementing admin_analytics/app_stats (totalAppInstalls)
- * and daily_analytics/YYYY-MM-DD (appInstalls)
+ * Subscribe in real-time to all telemetry events from tracking.js in Firestore
  */
-export async function trackAppDownload(): Promise<number> {
+export function subscribeToEvents(
+  onData: (events: TelemetryEventDocument[]) => void,
+  onError?: (err: Error) => void
+) {
+  const eventsRef = collection(db, EVENTS_COLLECTION);
+  return onSnapshot(
+    eventsRef,
+    (snapshot) => {
+      const items: TelemetryEventDocument[] = snapshot.docs.map((docSnap) => {
+        const data = docSnap.data();
+        return {
+          id: docSnap.id,
+          event_type: data.event_type || 'page_view',
+          userId: data.userId || 'ANONYMOUS',
+          timestamp: data.timestamp || new Date(),
+          user_agent: data.user_agent || '',
+          device_type: (data.device_type as DeviceType) || 'Mobile',
+          video_id: data.video_id || '',
+          referrer: data.referrer || 'Direct',
+          country: data.country || 'GH',
+          details: data.details || '',
+        };
+      });
+      // Client-side sort descending by timestamp for fast real-time ordering
+      items.sort((a, b) => {
+        const tA = a.timestamp?.toMillis ? a.timestamp.toMillis() : new Date(a.timestamp).getTime();
+        const tB = b.timestamp?.toMillis ? b.timestamp.toMillis() : new Date(b.timestamp).getTime();
+        return tB - tA;
+      });
+      onData(items);
+    },
+    (err) => {
+      handleFirestoreError(err, OperationType.LIST, EVENTS_COLLECTION);
+      if (onError) onError(err);
+    }
+  );
+}
+
+/**
+ * Log a telemetry event coming from client scripts (tracking.js, script.js, notification.js)
+ */
+export async function logTelemetryEvent(
+  eventData: Omit<TelemetryEventDocument, 'id'>
+): Promise<string> {
   const todayStr = getFormattedDate();
+  const docRef = doc(collection(db, EVENTS_COLLECTION));
   const adminStatsRef = doc(db, ADMIN_ANALYTICS_COLLECTION, APP_STATS_DOC);
   const dailyAnalyticsRef = doc(db, DAILY_ANALYTICS_COLLECTION, todayStr);
 
+  const payload: Record<string, any> = {
+    event_type: eventData.event_type || 'page_view',
+    userId: eventData.userId || 'ANONYMOUS',
+    timestamp: eventData.timestamp || serverTimestamp(),
+    user_agent: eventData.user_agent || (typeof navigator !== 'undefined' ? navigator.userAgent : ''),
+    device_type: eventData.device_type || 'Mobile',
+    video_id: eventData.video_id || '',
+    referrer: eventData.referrer || (typeof document !== 'undefined' ? document.referrer : 'Direct'),
+    country: eventData.country || 'GH',
+    details: eventData.details || '',
+  };
+
   try {
-    // Increment admin_analytics/app_stats totalAppInstalls
-    await setDoc(adminStatsRef, { totalAppInstalls: increment(1) }, { merge: true });
+    await setDoc(docRef, payload);
 
-    // Increment daily_analytics/YYYY-MM-DD appInstalls
-    await setDoc(dailyAnalyticsRef, { appInstalls: increment(1) }, { merge: true });
+    const adminUpdates: Record<string, any> = {};
+    const dailyUpdates: Record<string, any> = {};
 
+    const type = eventData.event_type;
+    if (type === 'get_app_click' || type === 'app_download_intent') {
+      adminUpdates.totalGetAppClicks = increment(1);
+      adminUpdates.totalAppInstalls = increment(1);
+      dailyUpdates.getAppClicks = increment(1);
+      dailyUpdates.appInstalls = increment(1);
+    } else if (type === 'unmute_shake' || type === 'unmute') {
+      adminUpdates.totalUnmutes = increment(1);
+      dailyUpdates.unmuteShakes = increment(1);
+    } else if (type === 'double_tap_heart' || type === 'heart') {
+      adminUpdates.totalHearts = increment(1);
+      dailyUpdates.doubleTapHearts = increment(1);
+    } else if (type === 'progress_drag' || type === 'seek') {
+      adminUpdates.totalProgressDrags = increment(1);
+      dailyUpdates.progressDrags = increment(1);
+    }
+
+    // Atomically increment views on the specific video document in Firestore
+    if (eventData.video_id) {
+      await incrementVideoViews(eventData.video_id);
+    } else if (type === 'video_view' || type === 'page_view') {
+      const match = eventData.details?.match(/(?:video_id|vid|stream):\s*([a-zA-Z0-9_\-]+)/i);
+      if (match && match[1]) {
+        await incrementVideoViews(match[1]);
+      }
+    }
+
+    if (Object.keys(adminUpdates).length > 0) {
+      await setDoc(adminStatsRef, adminUpdates, { merge: true });
+    }
+    if (Object.keys(dailyUpdates).length > 0) {
+      await setDoc(dailyAnalyticsRef, dailyUpdates, { merge: true });
+    }
+
+    return docRef.id;
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, EVENTS_COLLECTION);
+    throw err;
+  }
+}
+
+/**
+ * Track an APK download by incrementing admin_analytics/app_stats (totalAppInstalls & totalGetAppClicks)
+ * and daily_analytics/YYYY-MM-DD (appInstalls)
+ */
+export async function trackAppDownload(userId: string = 'ANONYMOUS', country: string = 'GH', deviceType: DeviceType = 'Mobile'): Promise<number> {
+  try {
+    await logTelemetryEvent({
+      event_type: 'get_app_click',
+      userId,
+      timestamp: new Date(),
+      device_type: deviceType,
+      country,
+      details: 'User clicked Get App / APK Download Trigger',
+    });
+
+    const adminStatsRef = doc(db, ADMIN_ANALYTICS_COLLECTION, APP_STATS_DOC);
     const snap = await getDoc(adminStatsRef);
     return snap.exists() ? (snap.data().totalAppInstalls || 0) : 0;
   } catch (err) {

@@ -1,19 +1,94 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+
+    // Global Deny Default
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    // Validation schemas
+    function isValidUser(data) {
+      return data.keys().hasAll(['userId', 'country', 'deviceType', 'trafficSource', 'status', 'lastActive', 'totalDurationSeconds', 'notificationSubscribed'])
+        && data.userId is string && data.userId.size() <= 64
+        && data.country is string && data.country.size() <= 10
+        && data.deviceType is string && data.deviceType.size() <= 20
+        && data.trafficSource is string && data.trafficSource.size() <= 50
+        && data.status is string && data.status.size() <= 20
+        && data.totalDurationSeconds is number && data.totalDurationSeconds >= 0
+        && data.notificationSubscribed is bool;
+    }
+
+    function isValidEvent(data) {
+      return data.keys().hasAll(['userId', 'event_type', 'country', 'device_type', 'traffic_source', 'details', 'timestamp'])
+        && data.userId is string && data.userId.size() <= 64
+        && data.event_type is string && data.event_type.size() <= 50
+        && data.country is string && data.country.size() <= 10
+        && data.device_type is string && data.device_type.size() <= 20
+        && data.traffic_source is string && data.traffic_source.size() <= 50
+        && data.details is string && data.details.size() <= 500;
+    }
+
+    function isValidDailyAnalytics(data) {
+      return data.keys().hasAll(['date', 'pageViews', 'uniqueVisitors', 'hourlyTraffic', 'getAppClicks', 'unmuteShakes', 'doubleTapHearts', 'progressDrags'])
+        && data.date is string && data.date.size() <= 20
+        && data.pageViews is number && data.pageViews >= 0
+        && data.uniqueVisitors is list
+        && data.hourlyTraffic is map;
+    }
+
+    function isValidAdminAnalytics(data) {
+      return data.totalAppInstalls is number && data.totalAppInstalls >= 0;
+    }
+
+    function isValidNotification(data) {
+      return data.type is string && data.type.size() <= 50
+        && data.message is string && data.message.size() <= 1000
+        && data.targetAudience is string && data.targetAudience.size() <= 50
+        && data.isActive is bool;
+    }
+
+    function isValidVideo(data) {
+      return data.title is string && data.title.size() <= 200
+        && data.videoUrl is string && data.videoUrl.size() <= 1000
+        && data.isActive is bool;
+    }
+
+    // Match Rules
+    match /videos/{videoId} {
+      allow read, write: if true;
+    }
+
     match /users/{userId} {
       allow read, write: if true;
     }
+
+    match /events/{eventId} {
+      allow read, write: if true;
+    }
+
     match /daily_analytics/{dateId} {
       allow read, write: if true;
     }
+
     match /admin_analytics/{docId} {
       allow read, write: if true;
     }
+
     match /notifications/{notificationId} {
-      allow read, write: if true;
-    }
-    match /videos/{videoId} {
       allow read, write: if true;
     }
   }

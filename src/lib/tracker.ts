@@ -1,5 +1,5 @@
-import { saveUserDoc, logPageViewEvent, toggleUserStatus } from './firebase';
-import { DeviceType } from '../types';
+import { saveUserDoc, logPageViewEvent, toggleUserStatus, logTelemetryEvent, incrementVideoViews } from './firebase';
+import { DeviceType, TelemetryEventType } from '../types';
 
 const VISITOR_STORAGE_KEY = 'shortxx_real_visitor_id';
 
@@ -188,5 +188,53 @@ export class RealWebsiteTracker {
       this.deviceType,
       this.trafficSource
     );
+  }
+
+  /**
+   * Log custom user interaction and telemetry events (Get App, Unmute Shake, Double-Tap Heart, Progress Drag)
+   */
+  public async trackEvent(
+    eventType: TelemetryEventType,
+    details?: string,
+    videoId?: string
+  ) {
+    return logTelemetryEvent({
+      event_type: eventType,
+      userId: this.visitorId,
+      timestamp: new Date(),
+      user_agent: typeof navigator !== 'undefined' ? navigator.userAgent : '',
+      device_type: this.deviceType,
+      video_id: videoId || '',
+      referrer: this.trafficSource,
+      country: this.country,
+      details: details || `Telemetry event triggered (${eventType})`,
+    });
+  }
+
+  public async trackGetAppClick(videoId?: string) {
+    return this.trackEvent('get_app_click', 'User clicked Get App / Android download button', videoId);
+  }
+
+  public async trackUnmuteShake(videoId?: string) {
+    return this.trackEvent('unmute_shake', 'User unmuted video via shake / tap', videoId);
+  }
+
+  public async trackDoubleTapHeart(videoId?: string) {
+    return this.trackEvent('double_tap_heart', 'User double-tapped video to heart/like', videoId);
+  }
+
+  public async trackProgressDrag(videoId?: string, timeSeconds?: number) {
+    return this.trackEvent(
+      'progress_drag',
+      `User dragged video progress bar to ${timeSeconds || 0}s`,
+      videoId
+    );
+  }
+
+  public async trackVideoView(videoId?: string) {
+    if (videoId) {
+      await incrementVideoViews(videoId);
+    }
+    return this.trackEvent('video_view', 'User viewed / played video stream', videoId);
   }
 }

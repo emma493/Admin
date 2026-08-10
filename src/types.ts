@@ -51,6 +51,11 @@ export interface DailyAnalyticsDocument {
   uniqueVisitors: string[]; // custom user IDs
   pageViews: number;
   appInstalls?: number;
+  getAppClicks?: number;
+  unmuteShakes?: number;
+  doubleTapHearts?: number;
+  progressDrags?: number;
+  eventBreakdown?: Record<string, number>;
   hourlyTraffic: Record<string, number>; // "0".."23" -> hit count
   trafficSources: Record<string, number>; // "google.com" -> count
   deviceTypes: Record<string, number>; // "Mobile" -> count
@@ -59,6 +64,34 @@ export interface DailyAnalyticsDocument {
 
 export interface AdminAnalyticsDocument {
   totalAppInstalls: number;
+  totalGetAppClicks?: number;
+  totalUnmutes?: number;
+  totalHearts?: number;
+  totalProgressDrags?: number;
+}
+
+export type TelemetryEventType =
+  | 'get_app_click'
+  | 'app_download_intent'
+  | 'unmute_shake'
+  | 'pause'
+  | 'double_tap_heart'
+  | 'progress_drag'
+  | 'page_view'
+  | 'new_session'
+  | string;
+
+export interface TelemetryEventDocument {
+  id: string;
+  event_type: TelemetryEventType;
+  userId: string;
+  timestamp: Timestamp | Date | number | any;
+  user_agent?: string;
+  device_type: DeviceType;
+  video_id?: string;
+  referrer?: string;
+  country?: string;
+  details?: string;
 }
 
 export interface UserFilterState {
@@ -75,8 +108,19 @@ export interface LiveActivityEvent {
   userId: string;
   country: string;
   deviceType: DeviceType;
-  action: 'PAGE_VIEW' | 'STATUS_CHANGE' | 'NEW_SESSION' | 'PING';
+  action:
+    | 'PAGE_VIEW'
+    | 'STATUS_CHANGE'
+    | 'NEW_SESSION'
+    | 'PING'
+    | 'GET_APP_CLICK'
+    | 'APP_DOWNLOAD_INTENT'
+    | 'UNMUTE_SHAKE'
+    | 'DOUBLE_TAP_HEART'
+    | 'PROGRESS_DRAG'
+    | 'PAUSE';
   details: string;
+  videoId?: string;
 }
 
 export type DateRangePreset = 'all' | 'today' | 'yesterday' | '7days' | '30days' | 'thisMonth' | 'custom';

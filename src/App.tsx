@@ -23,6 +23,9 @@ import {
   toggleUserStatus,
   deleteUserDoc,
   logPageViewEvent,
+  subscribeToEvents,
+  incrementVideoViews,
+  logTelemetryEvent,
 } from './lib/firebase';
 import { RealWebsiteTracker } from './lib/tracker';
 import {
@@ -34,6 +37,7 @@ import {
   LiveActivityEvent,
   DeviceType,
   ThemeMode,
+  TelemetryEventDocument,
 } from './types';
 import { getFormattedDate } from './lib/utils';
 import { Sidebar } from './components/Sidebar';
@@ -70,6 +74,7 @@ export default function App() {
   const [adminAnalytics, setAdminAnalytics] = useState<AdminAnalyticsDocument | null>(null);
   const [notifications, setNotifications] = useState<NotificationDocument[]>([]);
   const [videos, setVideos] = useState<VideoDocument[]>([]);
+  const [events, setEvents] = useState<TelemetryEventDocument[]>([]);
 
   const [firestoreConnected, setFirestoreConnected] = useState<boolean>(false);
 
@@ -122,6 +127,21 @@ export default function App() {
 
     return () => {
       tracker.stopTracking();
+    };
+  }, []);
+
+  // 1b. Bind global ShortxxTrackerAPI for client-side scripts (tracking.js / user sites)
+  useEffect(() => {
+    (window as any).ShortxxTrackerAPI = {
+      logEvent: async (payload: any) => {
+        if (payload.video_id) {
+          await incrementVideoViews(payload.video_id);
+        }
+        return logTelemetryEvent(payload);
+      },
+      incrementVideoViews: async (videoId: string) => {
+        return incrementVideoViews(videoId);
+      },
     };
   }, []);
 
@@ -187,6 +207,15 @@ export default function App() {
     });
 
     return () => unsubscribeVideos();
+  }, []);
+
+  // 8. Subscribe to Real Firestore Telemetry Events Collection
+  useEffect(() => {
+    const unsubscribeEvents = subscribeToEvents((list) => {
+      setEvents(list);
+    });
+
+    return () => unsubscribeEvents();
   }, []);
 
   // Handler to download app.apk and increment install metrics in Firestore
@@ -269,6 +298,7 @@ export default function App() {
           firestoreConnected={firestoreConnected}
           onToggleMobileMenu={toggleMobileMenu}
           isMobileMenuOpen={isMobileMenuOpen}
+          alerts={events}
         />
 
         {/* CONTAINER BODY */}
@@ -288,6 +318,7 @@ export default function App() {
               allDailyAnalytics={allDailyAnalytics}
               adminAnalytics={adminAnalytics}
               activityFeed={activityFeed}
+              events={events}
               onNavigateToUsers={() => setActiveTab('users')}
               onNavigateToAnalytics={() => setActiveTab('analytics')}
               onDownloadApp={handleDownloadApp}
@@ -389,6 +420,7 @@ export default function App() {
           {activeTab === 'videos' && (
             <VideosTab
               videos={videos}
+              events={events}
               onSaveVideo={async (data) => {
                 await saveVideoDoc(data);
                 addActivityEvent(

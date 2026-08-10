@@ -15,6 +15,12 @@ import {
   Layers,
   Filter,
   Download,
+  Heart,
+  Volume2,
+  Sliders,
+  Pause,
+  Sparkles,
+  MousePointerClick,
 } from 'lucide-react';
 import {
   ResponsiveContainer,
@@ -27,6 +33,9 @@ import {
   PieChart,
   Pie,
   Cell,
+  BarChart,
+  Bar,
+  Legend,
 } from 'recharts';
 import {
   UserDocument,
@@ -35,6 +44,7 @@ import {
   LiveActivityEvent,
   ThemeMode,
   DateRangeState,
+  TelemetryEventDocument,
 } from '../types';
 import {
   formatDuration,
@@ -53,6 +63,7 @@ interface DashboardTabProps {
   allDailyAnalytics?: DailyAnalyticsDocument[];
   adminAnalytics: AdminAnalyticsDocument | null;
   activityFeed: LiveActivityEvent[];
+  events?: TelemetryEventDocument[];
   onNavigateToUsers: () => void;
   onNavigateToAnalytics: () => void;
   onDownloadApp: () => void;
@@ -67,6 +78,7 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({
   allDailyAnalytics = [],
   adminAnalytics,
   activityFeed,
+  events = [],
   onNavigateToUsers,
   onNavigateToAnalytics,
   onDownloadApp,
@@ -75,7 +87,8 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({
   onDateRangeChange,
 }) => {
   const isDark = theme === 'dark';
-  const [activeSubView, setActiveSubView] = useState<'overview' | 'response' | 'cache' | 'geo'>('overview');
+  const [activeSubView, setActiveSubView] = useState<'overview' | 'telemetry' | 'cache' | 'geo'>('overview');
+  const [eventFilter, setEventFilter] = useState<string>('ALL');
 
   // Filter users based on selected date range
   const filteredUsers = users.filter((u) => isUserInDateRange(u, dateRange.startDate, dateRange.endDate));
@@ -93,6 +106,9 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({
     ? matchingAnalyticsDocs.reduce((acc, d) => acc + (d.pageViews || 0), 0)
     : (dailyAnalytics?.pageViews ?? 0);
 
+  const totalGetAppClicks = adminAnalytics?.totalGetAppClicks ?? (adminAnalytics?.totalAppInstalls ?? 0);
+  const conversionRate = overallPageViews > 0 ? ((totalGetAppClicks / overallPageViews) * 100).toFixed(1) : '0.0';
+
   const uniqueSet = new Set<string>();
   if (matchingAnalyticsDocs.length > 0) {
     matchingAnalyticsDocs.forEach((d) => (d.uniqueVisitors || []).forEach((uv) => uniqueSet.add(uv)));
@@ -105,10 +121,13 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({
   const hourlyData = Array.from({ length: 24 }, (_, h) => {
     const key = h.toString();
     let hits = 0;
+    let downloads = 0;
     if (matchingAnalyticsDocs.length > 0) {
       hits = matchingAnalyticsDocs.reduce((sum, d) => sum + (d.hourlyTraffic?.[key] || 0), 0);
+      downloads = matchingAnalyticsDocs.reduce((sum, d) => sum + (d.getAppClicks || 0), 0) / 24;
     } else {
       hits = dailyAnalytics?.hourlyTraffic?.[key] || 0;
+      downloads = (dailyAnalytics?.getAppClicks || 0) / 24;
     }
 
     const hourLabel =
@@ -123,6 +142,7 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({
       hour: h,
       hourLabel,
       hits,
+      downloads: Math.round(downloads),
     };
   });
 
@@ -149,6 +169,13 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({
     { name: 'Tablet', value: totalTablet, color: isDark ? '#52525b' : '#71717a' }, // Gray
   ];
 
+  // Combine activityFeed & events into a unified real-time telemetry log
+  const combinedEvents = [...events];
+  const filteredTelemetryEvents = combinedEvents.filter((ev) => {
+    if (eventFilter === 'ALL') return true;
+    return ev.event_type?.toUpperCase() === eventFilter.toUpperCase();
+  });
+
   return (
     <div className="space-y-6">
       {/* GLOBAL DATE RANGE FILTER */}
@@ -169,46 +196,22 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({
           Overview Stats
         </button>
         <button
-          onClick={() => setActiveSubView('response')}
+          onClick={() => setActiveSubView('telemetry')}
           className={`px-4 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap ${
-            activeSubView === 'response'
+            activeSubView === 'telemetry'
               ? 'bg-red-600 text-white shadow-md shadow-red-600/20'
               : isDark
               ? 'bg-zinc-900 text-zinc-400 hover:text-white hover:bg-zinc-800'
               : 'bg-zinc-100 text-zinc-600 hover:text-zinc-900 hover:bg-zinc-200'
           }`}
         >
-          Response Stats
-        </button>
-        <button
-          onClick={() => setActiveSubView('cache')}
-          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap ${
-            activeSubView === 'cache'
-              ? 'bg-red-600 text-white shadow-md shadow-red-600/20'
-              : isDark
-              ? 'bg-zinc-900 text-zinc-400 hover:text-white hover:bg-zinc-800'
-              : 'bg-zinc-100 text-zinc-600 hover:text-zinc-900 hover:bg-zinc-200'
-          }`}
-        >
-          CDN & Cache
-        </button>
-        <button
-          onClick={() => setActiveSubView('geo')}
-          className={`px-4 py-2 rounded-xl text-xs font-bold transition-all whitespace-nowrap ${
-            activeSubView === 'geo'
-              ? 'bg-red-600 text-white shadow-md shadow-red-600/20'
-              : isDark
-              ? 'bg-zinc-900 text-zinc-400 hover:text-white hover:bg-zinc-800'
-              : 'bg-zinc-100 text-zinc-600 hover:text-zinc-900 hover:bg-zinc-200'
-          }`}
-        >
-          Geo & IP Distribution
+          Custom Telemetry & Media Interaction
         </button>
       </div>
 
-      {/* METRIC CARDS GRID (Red, White, Black themed) */}
+      {/* METRIC CARDS GRID */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
-        {/* Metric Card 0: App Installation Metric */}
+        {/* Dedicated Metric Counter Card: App Downloads / Get App Clicks */}
         <div
           className={`border rounded-2xl p-5 shadow-sm relative overflow-hidden transition-all ${
             isDark
@@ -218,26 +221,42 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({
         >
           <div className="flex items-center justify-between">
             <span className={`text-xs font-bold uppercase tracking-wider ${isDark ? 'text-zinc-400' : 'text-zinc-500'}`}>
-              Total App Installs
+              App Downloads / Get App Clicks
             </span>
-            <div className={`p-2.5 rounded-xl ${isDark ? 'bg-red-950 text-red-500 border border-red-900' : 'bg-red-50 text-red-600 border border-red-100'}`}>
-              <Download className="w-5 h-5 text-red-500" />
+            <div className={`p-2.5 rounded-xl ${isDark ? 'bg-indigo-950 text-indigo-400 border border-indigo-900' : 'bg-indigo-50 text-indigo-600 border border-indigo-100'}`}>
+              <Download className="w-5 h-5 text-indigo-500" />
             </div>
           </div>
 
-          <div className="mt-3 flex items-baseline gap-2">
-            <span className="text-3xl font-black tracking-tight">
-              {adminAnalytics?.totalAppInstalls || 0}
-            </span>
-            <span className={`text-xs font-extrabold px-2 py-0.5 rounded-full border ${isDark ? 'bg-red-950/80 text-red-400 border-red-900' : 'bg-red-50 text-red-700 border-red-200'}`}>
-              Live
+          <div className="mt-3 flex items-baseline justify-between gap-2">
+            <div>
+              <span className="text-3xl font-black tracking-tight text-indigo-500">
+                {totalGetAppClicks.toLocaleString()}
+              </span>
+              <span className={`ml-2 text-xs font-mono ${isDark ? 'text-zinc-400' : 'text-zinc-500'}`}>
+                clicks
+              </span>
+            </div>
+            <span className="text-xs font-extrabold px-2.5 py-1 rounded-full bg-indigo-600/20 text-indigo-400 border border-indigo-500/30">
+              {conversionRate}% Conv.
             </span>
           </div>
 
           <p className={`mt-2 text-xs flex items-center gap-1.5 ${isDark ? 'text-zinc-400' : 'text-zinc-600'}`}>
-            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-ping inline-block" />
-            <span>Synced in real-time via onSnapshot</span>
+            <MousePointerClick className="w-3.5 h-3.5 text-indigo-400" />
+            <span>Conversion rate relative to {overallPageViews.toLocaleString()} total visits</span>
           </p>
+
+          <div className={`mt-4 pt-3 border-t flex justify-between items-center text-xs ${isDark ? 'border-zinc-800/80 text-zinc-400' : 'border-zinc-100 text-zinc-500'}`}>
+            <span>Target: Android APK</span>
+            <button
+              onClick={onDownloadApp}
+              className="text-indigo-400 hover:text-indigo-300 font-bold flex items-center gap-1"
+            >
+              <span>Test Download</span>
+              <ArrowUpRight className="w-3.5 h-3.5" />
+            </button>
+          </div>
         </div>
 
         {/* Metric Card 1: Active Users */}
@@ -371,7 +390,7 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({
         </div>
       </div>
 
-      {/* MAIN TRAFFIC CHART CARD */}
+      {/* MAIN TRAFFIC & APP DOWNLOAD CHART CARD */}
       <div
         className={`border rounded-2xl p-6 shadow-sm transition-all ${
           isDark ? 'bg-zinc-900/90 border-zinc-800 text-white' : 'bg-white border-zinc-200 text-zinc-900'
@@ -381,14 +400,14 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({
           <div>
             <div className="flex items-center gap-2">
               <h2 className="text-lg font-black tracking-tight">
-                Hourly Traffic Volume
+                Hourly Traffic & App Downloads Series
               </h2>
               <span className={`text-xs font-extrabold px-2.5 py-0.5 rounded-full border ${isDark ? 'bg-red-950 text-red-400 border-red-900' : 'bg-red-50 text-red-700 border-red-200'}`}>
-                12 AM to 11 PM
+                Multi-Series Telemetry
               </span>
             </div>
             <p className={`text-xs mt-1 ${isDark ? 'text-zinc-400' : 'text-zinc-500'}`}>
-              Realtime traffic distribution logged in Firestore
+              Comparing page views alongside Get App / Android download triggers
             </p>
           </div>
 
@@ -396,15 +415,14 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({
             <div className="flex items-center gap-2">
               <span className="w-3 h-3 rounded-full bg-red-600 inline-block" />
               <span className={`font-semibold ${isDark ? 'text-zinc-300' : 'text-zinc-700'}`}>
-                Hits
+                Page Views
               </span>
             </div>
-            <div
-              className={`px-3 py-1 rounded-xl font-bold border ${
-                isDark ? 'bg-zinc-800 text-zinc-200 border-zinc-700' : 'bg-zinc-100 text-zinc-800 border-zinc-200'
-              }`}
-            >
-              Peak: {peakHourObj.hits} hits @ {peakHourObj.hourLabel}
+            <div className="flex items-center gap-2">
+              <span className="w-3 h-3 rounded-full bg-indigo-500 inline-block" />
+              <span className={`font-semibold ${isDark ? 'text-zinc-300' : 'text-zinc-700'}`}>
+                Get App Clicks
+              </span>
             </div>
           </div>
         </div>
@@ -417,6 +435,10 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({
                 <linearGradient id="redTrafficGradient" x1="0" y1="0" x2="0" y2="1">
                   <stop offset="5%" stopColor="#dc2626" stopOpacity={0.4} />
                   <stop offset="95%" stopColor="#dc2626" stopOpacity={0.0} />
+                </linearGradient>
+                <linearGradient id="indigoDownloadGradient" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor="#6366f1" stopOpacity={0.4} />
+                  <stop offset="95%" stopColor="#6366f1" stopOpacity={0.0} />
                 </linearGradient>
               </defs>
               <CartesianGrid
@@ -446,23 +468,31 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({
                   color: isDark ? '#ffffff' : '#09090b',
                 }}
                 labelStyle={{ fontWeight: 'bold', color: '#dc2626' }}
-                formatter={(value: any) => [`${value} hits`, 'Traffic Hits']}
               />
               <Area
                 type="monotone"
                 dataKey="hits"
+                name="Page Views"
                 stroke="#dc2626"
                 strokeWidth={3}
                 fillOpacity={1}
                 fill="url(#redTrafficGradient)"
-                activeDot={{ r: 6, fill: '#ef4444', stroke: '#dc2626', strokeWidth: 2 }}
+              />
+              <Area
+                type="monotone"
+                dataKey="downloads"
+                name="Get App Clicks"
+                stroke="#6366f1"
+                strokeWidth={2}
+                fillOpacity={1}
+                fill="url(#indigoDownloadGradient)"
               />
             </AreaChart>
           </ResponsiveContainer>
         </div>
       </div>
 
-      {/* LOWER SECTION: DEVICE BREAKDOWN DONUT & LIVE TICKER */}
+      {/* LOWER SECTION: DEVICE BREAKDOWN & TELEMETRY LOG VIEWER */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Device Breakdown Donut Card */}
         <div
@@ -539,37 +569,97 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({
           </div>
         </div>
 
-        {/* Live Activity Ticker Stream */}
+        {/* User Interaction Table / Live Telemetry Log Viewer */}
         <div
           className={`lg:col-span-2 border rounded-2xl p-5 shadow-sm flex flex-col justify-between ${
             isDark ? 'bg-zinc-900/90 border-zinc-800 text-white' : 'bg-white border-zinc-200 text-zinc-900'
           }`}
         >
           <div>
-            <div className="flex items-center justify-between mb-4">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 mb-4">
               <div className="flex items-center gap-2">
                 <Activity className="w-4 h-4 text-red-600 animate-pulse" />
-                <h3 className="text-base font-black">Live Event Stream</h3>
+                <h3 className="text-base font-black">User Interaction & Telemetry Viewer</h3>
               </div>
-              <span
-                className={`text-xs px-2.5 py-1 rounded-full font-bold border ${
-                  isDark
-                    ? 'bg-zinc-800 text-zinc-300 border-zinc-700'
-                    : 'bg-zinc-100 text-zinc-800 border-zinc-200'
-                }`}
-              >
-                Firestore Realtime
-              </span>
+
+              {/* Status & Event Filter Dropdown */}
+              <div className="flex items-center gap-2">
+                <Filter className="w-3.5 h-3.5 text-zinc-400" />
+                <select
+                  value={eventFilter}
+                  onChange={(e) => setEventFilter(e.target.value)}
+                  className={`text-xs px-2.5 py-1 rounded-xl font-bold border transition-all ${
+                    isDark
+                      ? 'bg-zinc-950 border-zinc-800 text-zinc-200 focus:border-red-600'
+                      : 'bg-zinc-50 border-zinc-200 text-zinc-800 focus:border-red-600'
+                  }`}
+                >
+                  <option value="ALL">All Event Types</option>
+                  <option value="GET_APP_CLICK">Get App Click</option>
+                  <option value="UNMUTE_SHAKE">Unmute Shake</option>
+                  <option value="DOUBLE_TAP_HEART">Double-Tap Heart</option>
+                  <option value="PROGRESS_DRAG">Progress Drag</option>
+                  <option value="PAUSE">Pause</option>
+                  <option value="PAGE_VIEW">Page View</option>
+                </select>
+              </div>
             </div>
 
-            <div className="space-y-2.5 max-h-64 overflow-y-auto pr-1 scrollbar-thin">
-              {activityFeed.length === 0 ? (
+            <div className="space-y-2.5 max-h-72 overflow-y-auto pr-1 scrollbar-thin">
+              {filteredTelemetryEvents.length === 0 ? (
                 <div className={`text-center py-8 text-xs ${isDark ? 'text-zinc-500' : 'text-zinc-400'}`}>
-                  No live events recorded yet. Turn on "Start Simulator" to generate live stream traffic!
+                  No events match filter "{eventFilter}". Click Get App or trigger telemetry events to test live.
                 </div>
               ) : (
-                activityFeed.slice(0, 7).map((ev) => {
-                  const country = getCountryInfo(ev.country);
+                filteredTelemetryEvents.slice(0, 10).map((ev) => {
+                  const type = ev.event_type?.toUpperCase() || 'PAGE_VIEW';
+
+                  // Badge Styling helper
+                  const getBadgeStyle = () => {
+                    if (type === 'GET_APP_CLICK' || type === 'APP_DOWNLOAD_INTENT') {
+                      return {
+                        bg: 'bg-indigo-950/80 text-indigo-400 border-indigo-900',
+                        icon: <Download className="w-3 h-3 text-indigo-400" />,
+                        label: 'Get App Click',
+                      };
+                    }
+                    if (type === 'UNMUTE_SHAKE' || type === 'UNMUTE') {
+                      return {
+                        bg: 'bg-amber-950/80 text-amber-400 border-amber-900',
+                        icon: <Volume2 className="w-3 h-3 text-amber-400" />,
+                        label: 'Unmute Shake',
+                      };
+                    }
+                    if (type === 'DOUBLE_TAP_HEART' || type === 'HEART') {
+                      return {
+                        bg: 'bg-rose-950/80 text-rose-400 border-rose-900',
+                        icon: <Heart className="w-3 h-3 text-rose-400" />,
+                        label: 'Double-Tap Heart',
+                      };
+                    }
+                    if (type === 'PROGRESS_DRAG' || type === 'SEEK') {
+                      return {
+                        bg: 'bg-cyan-950/80 text-cyan-400 border-cyan-900',
+                        icon: <Sliders className="w-3 h-3 text-cyan-400" />,
+                        label: 'Progress Drag',
+                      };
+                    }
+                    if (type === 'PAUSE') {
+                      return {
+                        bg: 'bg-zinc-800 text-zinc-300 border-zinc-700',
+                        icon: <Pause className="w-3 h-3 text-zinc-400" />,
+                        label: 'Pause',
+                      };
+                    }
+                    return {
+                      bg: 'bg-red-950/80 text-red-400 border-red-900',
+                      icon: <Eye className="w-3 h-3 text-red-400" />,
+                      label: 'Page View',
+                    };
+                  };
+
+                  const badge = getBadgeStyle();
+
                   return (
                     <div
                       key={ev.id}
@@ -580,27 +670,34 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({
                       }`}
                     >
                       <div className="flex items-center gap-3">
-                        <CountryFlag code={ev.country} size="md" />
+                        <CountryFlag code={ev.country || 'GH'} size="md" />
                         <div>
                           <div className="flex items-center gap-2">
-                            <span className="font-extrabold font-mono">{ev.userId}</span>
+                            <span className="font-extrabold font-mono text-red-500">
+                              {ev.userId || 'VISITOR'}
+                            </span>
+                            {/* Action Badge */}
                             <span
-                              className={`text-[10px] px-1.5 py-0.2 rounded font-bold border ${
-                                isDark
-                                  ? 'bg-zinc-800 text-zinc-300 border-zinc-700'
-                                  : 'bg-zinc-200 text-zinc-800 border-zinc-300'
-                              }`}
+                              className={`text-[10px] px-2 py-0.5 rounded-full font-bold border flex items-center gap-1 ${badge.bg}`}
                             >
-                              {ev.deviceType}
+                              {badge.icon}
+                              <span>{badge.label}</span>
                             </span>
                           </div>
-                          <p className={`mt-0.5 ${isDark ? 'text-zinc-400' : 'text-zinc-600'}`}>{ev.details}</p>
+                          <p className={`mt-1 text-[11px] ${isDark ? 'text-zinc-300' : 'text-zinc-700'}`}>
+                            {ev.details || `Triggered event ${ev.event_type}`}
+                          </p>
                         </div>
                       </div>
 
-                      <span className={`text-[11px] font-mono ${isDark ? 'text-zinc-500' : 'text-zinc-400'}`}>
-                        {formatTimeAgo(ev.timestamp)}
-                      </span>
+                      <div className="text-right">
+                        <span className={`text-[10px] font-mono block ${isDark ? 'text-zinc-500' : 'text-zinc-400'}`}>
+                          {ev.device_type || 'Mobile'}
+                        </span>
+                        <span className={`text-[9px] font-mono ${isDark ? 'text-zinc-500' : 'text-zinc-400'}`}>
+                          {ev.timestamp?.toMillis ? formatTimeAgo(ev.timestamp.toDate()) : 'Just now'}
+                        </span>
+                      </div>
                     </div>
                   );
                 })
@@ -609,12 +706,12 @@ export const DashboardTab: React.FC<DashboardTabProps> = ({
           </div>
 
           <div className={`mt-4 pt-3 border-t flex justify-between items-center text-xs ${isDark ? 'border-zinc-800 text-zinc-400' : 'border-zinc-100 text-zinc-500'}`}>
-            <span>Synced in realtime</span>
+            <span>Showing {filteredTelemetryEvents.length} telemetry entries</span>
             <button
               onClick={onNavigateToUsers}
               className="text-red-600 hover:text-red-500 font-bold"
             >
-              Filter by User →
+              Manage Users Directory →
             </button>
           </div>
         </div>
