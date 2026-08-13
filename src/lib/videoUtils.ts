@@ -68,11 +68,11 @@ export interface LinkHealthResult {
 
 /**
  * Verify if a video stream link is playable/accessible.
- * Uses a combination of fetch network probe and HTMLVideoElement media test.
+ * Uses network probe and HTMLVideoElement media test to reliably catch broken links.
  */
 export async function verifyVideoLink(
   url: string,
-  timeoutMs: number = 6000
+  timeoutMs: number = 5000
 ): Promise<LinkHealthResult> {
   const startTime = Date.now();
 
@@ -95,50 +95,65 @@ export async function verifyVideoLink(
       });
     };
 
-    // Timeout safety fallback
+    // 0. Quick sanity check on URL string
+    try {
+      new URL(url);
+    } catch (e) {
+      finish('broken', 'Invalid URL format');
+      return;
+    }
+
+    // Timeout fallback - if nothing responds in time, mark broken/unreachable
     const timer = setTimeout(() => {
-      // If network is slow or CORS blocks, check via video element or fetch
-      finish('unreachable', 'Connection timeout (6s)');
+      finish('broken', 'Connection timeout - link unreachable');
     }, timeoutMs);
 
-    // 1. Try standard fetch HEAD or GET request first
-    fetch(url, { method: 'HEAD', mode: 'no-cors' })
-      .then(() => {
-        // In no-cors mode, opaque response means the server responded!
-        clearTimeout(timer);
-        finish('healthy');
+    // 1. Media Element Probe (most accurate for video streams)
+    const video = document.createElement('video');
+    video.preload = 'metadata';
+    video.src = url;
+
+    const onHealthy = () => {
+      cleanup();
+      finish('healthy');
+    };
+
+    const onError = () => {
+      cleanup();
+      finish('broken', 'Video stream failed to load or returned error');
+    };
+
+    const cleanup = () => {
+      clearTimeout(timer);
+      video.removeEventListener('loadedmetadata', onHealthy);
+      video.removeEventListener('canplay', onHealthy);
+      video.removeEventListener('loadeddata', onHealthy);
+      video.removeEventListener('error', onError);
+      video.removeAttribute('src');
+      video.load();
+    };
+
+    video.addEventListener('loadedmetadata', onHealthy);
+    video.addEventListener('canplay', onHealthy);
+    video.addEventListener('loadeddata', onHealthy);
+    video.addEventListener('error', onError);
+
+    // 2. Fetch probe in parallel
+    fetch(url, { method: 'HEAD' })
+      .then((res) => {
+        if (res.ok || res.status === 200 || res.status === 206) {
+          cleanup();
+          finish('healthy', undefined, res.status);
+        } else if (res.status >= 400) {
+          cleanup();
+          finish('broken', `HTTP ${res.status}`, res.status);
+        }
       })
       .catch(() => {
-        // Fallback: Test via HTMLVideoElement probe in memory
-        const video = document.createElement('video');
-        video.preload = 'metadata';
-        video.src = url;
-
-        const onCanPlay = () => {
-          cleanup();
-          finish('healthy');
-        };
-
-        const onError = () => {
-          cleanup();
-          finish('broken', 'Video stream failed to load or decode');
-        };
-
-        const cleanup = () => {
-          clearTimeout(timer);
-          video.removeEventListener('loadedmetadata', onCanPlay);
-          video.removeEventListener('canplay', onCanPlay);
-          video.removeEventListener('error', onError);
-          video.removeAttribute('src');
-          video.load();
-        };
-
-        video.addEventListener('loadedmetadata', onCanPlay);
-        video.addEventListener('canplay', onCanPlay);
-        video.addEventListener('error', onError);
-
-        // Trigger load
-        video.load();
+        // CORS restriction might block fetch, so let video element complete probe
       });
+
+    // Start video loading probe
+    video.load();
   });
 }

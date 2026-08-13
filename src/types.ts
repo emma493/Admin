@@ -26,6 +26,7 @@ export type NotificationStatus = 'active' | 'paused';
 export interface VideoDocument {
   id: string;
   page_url?: string;
+  source_webpage?: string;
   direct_url: string;
   is_active: boolean;
   created_at: Timestamp | Date | number | any;

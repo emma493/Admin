@@ -18,16 +18,11 @@ import {
   ThemeMode,
   TelemetryEventDocument,
 } from './types';
-import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
 import { VideosTab } from './components/VideosTab';
-import { MobileNav } from './components/MobileNav';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'videos'>('videos');
   const [theme, setTheme] = useState<ThemeMode>('dark');
-  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(false);
-  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState<boolean>(false);
 
   // Real-time Firestore State
   const [videos, setVideos] = useState<VideoDocument[]>([]);
@@ -36,14 +31,6 @@ export default function App() {
 
   const toggleTheme = () => {
     setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
-  };
-
-  const toggleSidebar = () => {
-    setIsSidebarCollapsed((prev) => !prev);
-  };
-
-  const toggleMobileMenu = () => {
-    setIsMobileMenuOpen((prev) => !prev);
   };
 
   // Bind global ShortxxTrackerAPI for client-side scripts (tracking.js / user sites)
@@ -77,7 +64,7 @@ export default function App() {
     return () => unsubscribeVideos();
   }, []);
 
-  // Subscribe to Real Firestore Telemetry Events Collection (for stream views metric sync)
+  // Subscribe to Real Firestore Telemetry Events Collection
   useEffect(() => {
     const unsubscribeEvents = subscribeToEvents((list) => {
       setEvents(list);
@@ -90,58 +77,34 @@ export default function App() {
 
   return (
     <div
-      className={`min-h-screen flex flex-col lg:flex-row font-sans antialiased selection:bg-red-600 selection:text-white transition-colors duration-200 ${
+      className={`min-h-screen flex flex-col font-sans antialiased selection:bg-red-600 selection:text-white transition-colors duration-200 ${
         isDark ? 'bg-black text-zinc-100' : 'bg-zinc-100 text-zinc-900'
       }`}
     >
-      {/* SIDEBAR NAVIGATION (Desktop & Mobile Drawer) */}
-      <Sidebar
-        activeTab={activeTab}
-        setActiveTab={setActiveTab}
-        firestoreConnected={firestoreConnected}
-        isCollapsed={isSidebarCollapsed}
-        onToggleCollapse={toggleSidebar}
-        isMobileOpen={isMobileMenuOpen}
-        onCloseMobile={() => setIsMobileMenuOpen(false)}
-      />
-
-      {/* MAIN CONTENT AREA */}
-      <div className="flex-1 flex flex-col min-w-0">
-        {/* HEADER BAR */}
-        <Header
-          activeTab={activeTab}
-          theme={theme}
-          onToggleTheme={toggleTheme}
-          firestoreConnected={firestoreConnected}
-          onToggleMobileMenu={toggleMobileMenu}
-          isMobileMenuOpen={isMobileMenuOpen}
-        />
-
-        {/* CONTAINER BODY - Strictly Videos Management */}
-        <main className="flex-1 p-3.5 sm:p-6 lg:p-8 pb-24 lg:pb-8 space-y-6 max-w-7xl w-full mx-auto">
-          <VideosTab
-            videos={videos}
-            events={events}
-            onSaveVideo={async (data) => {
-              await saveVideoDoc(data);
-            }}
-            onDeleteVideo={async (id) => {
-              await deleteVideoDoc(id);
-            }}
-            onToggleVideoStatus={async (id, currentIsActive) => {
-              await toggleVideoStatus(id, currentIsActive);
-            }}
-            theme={theme}
-          />
-        </main>
-      </div>
-
-      {/* MOBILE BOTTOM NAVIGATION */}
-      <MobileNav
-        activeTab={activeTab}
-        setActiveTab={setActiveTab}
+      {/* HEADER BAR */}
+      <Header
         theme={theme}
+        onToggleTheme={toggleTheme}
+        firestoreConnected={firestoreConnected}
       />
+
+      {/* SINGLE PAGE CONTAINER BODY - Strictly Stream Links & Videos Manager */}
+      <main className="flex-1 p-3.5 sm:p-6 lg:p-8 space-y-6 max-w-7xl w-full mx-auto">
+        <VideosTab
+          videos={videos}
+          events={events}
+          onSaveVideo={async (data) => {
+            await saveVideoDoc(data);
+          }}
+          onDeleteVideo={async (id) => {
+            await deleteVideoDoc(id);
+          }}
+          onToggleVideoStatus={async (id, currentIsActive) => {
+            await toggleVideoStatus(id, currentIsActive);
+          }}
+          theme={theme}
+        />
+      </main>
     </div>
   );
 }

@@ -333,7 +333,8 @@ export function subscribeToVideos(
         const data = docSnap.data();
         return {
           id: docSnap.id,
-          page_url: data.page_url || '',
+          page_url: data.page_url || data.source_webpage || '',
+          source_webpage: data.source_webpage || data.page_url || '',
           direct_url: data.direct_url || '',
           is_active: typeof data.is_active === 'boolean' ? data.is_active : true,
           created_at: data.created_at || new Date(),
@@ -359,9 +360,12 @@ export async function saveVideoDoc(videoData: Omit<VideoDocument, 'id'> & { id?:
       ? doc(db, VIDEOS_COLLECTION, videoData.id!)
       : doc(collection(db, VIDEOS_COLLECTION));
 
+    const sourceWebpage = videoData.source_webpage || videoData.page_url || '';
+
     const payload: Record<string, any> = {
-      page_url: videoData.page_url || '',
       direct_url: videoData.direct_url || '',
+      source_webpage: sourceWebpage,
+      page_url: sourceWebpage,
       is_active: typeof videoData.is_active === 'boolean' ? videoData.is_active : true,
       views: typeof videoData.views === 'number' ? videoData.views : 0,
       created_at: videoData.created_at ? videoData.created_at : serverTimestamp(),
