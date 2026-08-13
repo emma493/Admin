@@ -62,8 +62,8 @@ export const VideosTab: React.FC<VideosTabProps> = ({
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [isDeletingBatch, setIsDeletingBatch] = useState<boolean>(false);
 
-  // Video Health Checking State (Stores only healthy or checking states)
-  const [healthMap, setHealthMap] = useState<Record<string, 'healthy' | 'checking'>>({});
+  // Video Health Checking State
+  const [healthMap, setHealthMap] = useState<Record<string, 'healthy' | 'broken' | 'checking'>>({});
   const [isCheckingHealth, setIsCheckingHealth] = useState<boolean>(false);
 
   // Video Test Play Modal State
@@ -80,14 +80,14 @@ export const VideosTab: React.FC<VideosTabProps> = ({
   const parsedDirectUrls = extractLinksFromString(directUrl);
   const parsedPageUrls = extractLinksFromString(pageUrl);
 
-  // AUTOMATED SILENT LINK VALIDATION & INSTANT PURGING EFFECT
+  // AUTOMATED LINK HEALTH VALIDATION EFFECT (Checks link playability & marks status without auto-deleting)
   useEffect(() => {
     if (videos.length === 0 || isAutoValidatingRef.current) return;
 
     const unverifiedVideos = videos.filter((v) => !autoValidatedIdsRef.current.has(v.id));
     if (unverifiedVideos.length === 0) return;
 
-    const autoValidateAndPurge = async () => {
+    const autoValidate = async () => {
       isAutoValidatingRef.current = true;
 
       for (const video of unverifiedVideos) {
@@ -98,27 +98,21 @@ export const VideosTab: React.FC<VideosTabProps> = ({
           const health = await verifyVideoLink(video.direct_url, 4500);
 
           if (health.status === 'broken') {
-            // Silently purge broken link from Firestore without any notice or memory storage
-            console.log(`[Auto-Purge] Silently removing broken stream link: ${video.id}`);
-            await onDeleteVideo(video.id);
-            setHealthMap((prev) => {
-              const copy = { ...prev };
-              delete copy[video.id];
-              return copy;
-            });
+            setHealthMap((prev) => ({ ...prev, [video.id]: 'broken' }));
           } else {
             setHealthMap((prev) => ({ ...prev, [video.id]: 'healthy' }));
           }
         } catch (err) {
           console.warn('Auto verification error:', video.id, err);
+          setHealthMap((prev) => ({ ...prev, [video.id]: 'broken' }));
         }
       }
 
       isAutoValidatingRef.current = false;
     };
 
-    autoValidateAndPurge();
-  }, [videos, onDeleteVideo]);
+    autoValidate();
+  }, [videos]);
 
   // View count calculation helper for each video (supports Firestore views field & telemetry event fallback)
   const getVideoViewCount = (video: VideoDocument): number => {
@@ -191,13 +185,14 @@ export const VideosTab: React.FC<VideosTabProps> = ({
     return matchesSearch && matchesStatus;
   });
 
-  // Manual Health Sweep function - silently purges broken links without prompt
-  const runHealthCheckAndPurge = async () => {
+  // Manual Health Sweep function - checks playability and marks status for user review
+  const runHealthCheck = async () => {
     if (videos.length === 0 || isCheckingHealth) return;
 
     setIsCheckingHealth(true);
     setFeedback(null);
-    let purgedCount = 0;
+    let brokenCount = 0;
+    let healthyCount = 0;
 
     for (const video of videos) {
       setHealthMap((prev) => ({ ...prev, [video.id]: 'checking' }));
@@ -205,28 +200,25 @@ export const VideosTab: React.FC<VideosTabProps> = ({
       const check = await verifyVideoLink(video.direct_url, 4000);
 
       if (check.status === 'broken') {
-        try {
-          await onDeleteVideo(video.id);
-          purgedCount++;
-        } catch (err) {
-          console.error('Failed to purge broken video:', video.id, err);
-        }
+        setHealthMap((prev) => ({ ...prev, [video.id]: 'broken' }));
+        brokenCount++;
       } else {
         setHealthMap((prev) => ({ ...prev, [video.id]: 'healthy' }));
+        healthyCount++;
       }
     }
 
     setIsCheckingHealth(false);
 
-    if (purgedCount > 0) {
+    if (brokenCount > 0) {
       setFeedback({
-        type: 'success',
-        message: `Validation complete: Silently removed ${purgedCount} broken link${purgedCount > 1 ? 's' : ''}. Total link count updated!`,
+        type: 'error',
+        message: `Validation sweep complete: Found ${brokenCount} broken link${brokenCount > 1 ? 's' : ''} and ${healthyCount} healthy stream${healthyCount > 1 ? 's' : ''}. Review status badges below to decide which items to delete.`,
       });
     } else {
       setFeedback({
         type: 'success',
-        message: 'Validation complete: All active stream links are verified & healthy!',
+        message: 'Validation sweep complete: All video streams are verified & healthy!',
       });
     }
   };
@@ -687,7 +679,7 @@ export const VideosTab: React.FC<VideosTabProps> = ({
         </form>
       </div>
 
-      {/* HEALTH VALIDATOR & SILENT AUTO-PURGE PANEL */}
+      {/* HEALTH VALIDATOR PANEL */}
       <div
         className={`p-5 rounded-2xl border transition-all ${
           isDark ? 'bg-zinc-900/90 border-zinc-800 text-white' : 'bg-white border-zinc-200 text-zinc-900'
@@ -700,22 +692,22 @@ export const VideosTab: React.FC<VideosTabProps> = ({
             </div>
             <div>
               <h3 className="text-sm font-black flex items-center gap-2">
-                <span>Automated Link Health Validator & Silent Auto-Purge</span>
+                <span>Link Health Status Checker</span>
               </h3>
               <p className={`text-xs mt-0.5 ${isDark ? 'text-zinc-400' : 'text-zinc-500'}`}>
-                Continuously validates links in the background. If a stream becomes broken, it is automatically removed without notice, keeping only active links.
+                Scans stream links to verify playability status. Clearly highlights active vs. broken links so you can inspect and decide when to delete them.
               </p>
             </div>
           </div>
 
           <div className="flex items-center gap-3 flex-wrap">
             <button
-              onClick={runHealthCheckAndPurge}
+              onClick={runHealthCheck}
               disabled={isCheckingHealth || videos.length === 0}
               className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-extrabold flex items-center gap-2 shadow-sm transition-all active:scale-95 disabled:opacity-50"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${isCheckingHealth ? 'animate-spin' : ''}`} />
-              <span>{isCheckingHealth ? 'Validating Streams...' : 'Run Instant Validation Sweep'}</span>
+              <span>{isCheckingHealth ? 'Validating Streams...' : 'Scan Stream Health'}</span>
             </button>
           </div>
         </div>
@@ -1078,6 +1070,11 @@ export const VideosTab: React.FC<VideosTabProps> = ({
                           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-400 border border-amber-500/30 text-[10px] font-extrabold animate-pulse">
                             <RefreshCw className="w-3 h-3 animate-spin" />
                             Validating...
+                          </span>
+                        ) : healthMap[video.id] === 'broken' ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-red-500/20 text-red-400 border border-red-500/30 text-[10px] font-extrabold">
+                            <AlertCircle className="w-3 h-3 text-red-400" />
+                            Broken Link
                           </span>
                         ) : (
                           <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-[10px] font-extrabold">
