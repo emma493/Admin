@@ -13,10 +13,8 @@ import {
 import { BrandLogo } from './LogosAndFlags';
 
 interface SidebarProps {
-  activeTab: 'dashboard' | 'analytics' | 'users' | 'notifications' | 'videos';
-  setActiveTab: (tab: 'dashboard' | 'analytics' | 'users' | 'notifications' | 'videos') => void;
-  onlineCount: number;
-  totalUsersCount: number;
+  activeTab: 'videos';
+  setActiveTab: (tab: 'videos') => void;
   firestoreConnected: boolean;
   isCollapsed: boolean;
   onToggleCollapse: () => void;
@@ -27,7 +25,6 @@ interface SidebarProps {
 export const Sidebar: React.FC<SidebarProps> = ({
   activeTab,
   setActiveTab,
-  onlineCount,
   firestoreConnected,
   isCollapsed,
   onToggleCollapse,
@@ -108,95 +105,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
               </span>
             )}
             <nav className="mt-2 space-y-1">
-              {/* Dashboard */}
-              <button
-                onClick={() => {
-                  setActiveTab('dashboard');
-                  if (onCloseMobile) onCloseMobile();
-                }}
-                title="Dashboard"
-                className={`w-full flex items-center ${
-                  isCollapsed && !isMobileOpen ? 'justify-center px-0 py-3' : 'justify-between px-3.5 py-2.5'
-                } rounded-xl text-xs font-bold transition-all ${
-                  activeTab === 'dashboard'
-                    ? 'bg-red-600 text-white shadow-md shadow-red-600/20'
-                    : 'text-zinc-400 hover:text-white hover:bg-zinc-900'
-                }`}
-              >
-                <div className="flex items-center gap-2.5">
-                  <Activity className="w-4 h-4 flex-shrink-0" />
-                  {(!isCollapsed || isMobileOpen) && <span>Dashboard</span>}
-                </div>
-              </button>
-
-              {/* Analytics */}
-              <button
-                onClick={() => {
-                  setActiveTab('analytics');
-                  if (onCloseMobile) onCloseMobile();
-                }}
-                title="Analytics"
-                className={`w-full flex items-center ${
-                  isCollapsed && !isMobileOpen ? 'justify-center px-0 py-3' : 'justify-between px-3.5 py-2.5'
-                } rounded-xl text-xs font-bold transition-all ${
-                  activeTab === 'analytics'
-                    ? 'bg-red-600 text-white shadow-md shadow-red-600/20'
-                    : 'text-zinc-400 hover:text-white hover:bg-zinc-900'
-                }`}
-              >
-                <div className="flex items-center gap-2.5">
-                  <BarChart3 className="w-4 h-4 flex-shrink-0" />
-                  {(!isCollapsed || isMobileOpen) && <span>Analytics</span>}
-                </div>
-              </button>
-
-              {/* Users Directory */}
-              <button
-                onClick={() => {
-                  setActiveTab('users');
-                  if (onCloseMobile) onCloseMobile();
-                }}
-                title="Users Directory"
-                className={`w-full flex items-center ${
-                  isCollapsed && !isMobileOpen ? 'justify-center px-0 py-3' : 'justify-between px-3.5 py-2.5'
-                } rounded-xl text-xs font-bold transition-all ${
-                  activeTab === 'users'
-                    ? 'bg-red-600 text-white shadow-md shadow-red-600/20'
-                    : 'text-zinc-400 hover:text-white hover:bg-zinc-900'
-                }`}
-              >
-                <div className="flex items-center gap-2.5">
-                  <Users className="w-4 h-4 flex-shrink-0" />
-                  {(!isCollapsed || isMobileOpen) && <span>Users Directory</span>}
-                </div>
-                {(!isCollapsed || isMobileOpen) && onlineCount > 0 && (
-                  <span className="px-2 py-0.5 text-[10px] font-extrabold rounded-full bg-red-950 text-red-400 border border-red-800">
-                    {onlineCount}
-                  </span>
-                )}
-              </button>
-
-              {/* Notifications */}
-              <button
-                onClick={() => {
-                  setActiveTab('notifications');
-                  if (onCloseMobile) onCloseMobile();
-                }}
-                title="Notifications"
-                className={`w-full flex items-center ${
-                  isCollapsed && !isMobileOpen ? 'justify-center px-0 py-3' : 'justify-between px-3.5 py-2.5'
-                } rounded-xl text-xs font-bold transition-all ${
-                  activeTab === 'notifications'
-                    ? 'bg-red-600 text-white shadow-md shadow-red-600/20'
-                    : 'text-zinc-400 hover:text-white hover:bg-zinc-900'
-                }`}
-              >
-                <div className="flex items-center gap-2.5">
-                  <Bell className="w-4 h-4 flex-shrink-0 text-red-400" />
-                  {(!isCollapsed || isMobileOpen) && <span>Notifications</span>}
-                </div>
-              </button>
-
               {/* Videos */}
               <button
                 onClick={() => {
