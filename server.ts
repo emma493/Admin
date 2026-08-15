@@ -66,8 +66,7 @@ async function startServer() {
 }
 
 /**
- * Enhanced scraper/extractor logic for extracting raw video file source (.mp4, .m3u8, etc.)
- * from target HTML page, with specialized handling for xxxfollow.com and generic video platforms.
+ * Scraper/extractor logic for extracting raw video file source (.mp4, .m3u8, etc.) from target HTML page
  */
 async function extractVideoStreamFromUrl(pageUrl: string): Promise<{
   success: boolean;
@@ -89,7 +88,7 @@ async function extractVideoStreamFromUrl(pageUrl: string): Promise<{
     };
   }
 
-  // 2. Fetch the target webpage with realistic browser headers
+  // 2. Fetch the target webpage with custom User-Agent to bypass basic blocks
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 12000);
 
@@ -99,10 +98,9 @@ async function extractVideoStreamFromUrl(pageUrl: string): Promise<{
       signal: controller.signal,
       headers: {
         'User-Agent':
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,video/*;q=0.8,*/*;q=0.5',
         'Accept-Language': 'en-US,en;q=0.9',
-        'Referer': formattedUrl,
       },
     });
   } catch (err: any) {
@@ -131,21 +129,8 @@ async function extractVideoStreamFromUrl(pageUrl: string): Promise<{
   }
 
   const html = await response.text();
+  const directUrl = findVideoUrlInHtml(html, response.url || formattedUrl);
 
-  // 3. Specialized extractor for xxxfollow.com
-  if (formattedUrl.includes('xxxfollow.com')) {
-    const xxxfollowDirect = parseXxxfollowHtmlServer(html, response.url || formattedUrl);
-    if (xxxfollowDirect) {
-      return {
-        success: true,
-        source_webpage: pageUrl,
-        direct_url: xxxfollowDirect,
-      };
-    }
-  }
-
-  // 4. Universal Video Finder
-  const directUrl = findVideoUrlInHtmlServer(html, response.url || formattedUrl);
   if (directUrl) {
     return {
       success: true,
@@ -161,64 +146,7 @@ async function extractVideoStreamFromUrl(pageUrl: string): Promise<{
   };
 }
 
-function parseXxxfollowHtmlServer(html: string, pageUrl: string): string | null {
-  try {
-    // Check window.__PRELOAD_STATE__
-    const preloadMatch = html.match(/window\.__PRELOAD_STATE__\s*=\s*(\{[\s\S]*?\n\s*\}\s*<\/script>|\{[\s\S]*?\});/);
-    if (preloadMatch) {
-      const rawJson = preloadMatch[1].replace(/<\/script>$/, '').trim();
-      try {
-        const data = JSON.parse(rawJson);
-        for (const key of Object.keys(data)) {
-          if (key.startsWith('post-') || key === 'post') {
-            const postObj = data[key]?.post || data[key];
-            if (postObj?.media && Array.isArray(postObj.media)) {
-              for (const m of postObj.media) {
-                if (m.fhd_url && isDirectVideoUrl(m.fhd_url)) return m.fhd_url;
-                if (m.sd_url && isDirectVideoUrl(m.sd_url)) return m.sd_url;
-                if (m.url && isDirectVideoUrl(m.url)) return m.url;
-                if (m.uhd_url && isDirectVideoUrl(m.uhd_url)) return m.uhd_url;
-
-                const imgUrl = m.blur_url || m.thumb_url || m.start_url;
-                if (imgUrl && typeof imgUrl === 'string') {
-                  const baseMp4 = imgUrl.replace(/_(?:blur|start|thumb)\.(?:jpg|webp|jpeg)$/i, '.mp4');
-                  if (isDirectVideoUrl(baseMp4)) {
-                    return baseMp4;
-                  }
-                }
-              }
-            }
-          }
-        }
-      } catch (e) {
-        // Continue to regex patterns
-      }
-    }
-
-    // Regex search for media/fans/post_public images -> mp4
-    const mediaImgMatches = html.matchAll(
-      /https?:\/\/[^\s"'<>]+\/media\/fans\/post_public\/[0-9]+\/[0-9]+\/([0-9]+)_(?:blur|start|thumb)\.(?:jpg|webp|jpeg)/gi
-    );
-    for (const match of mediaImgMatches) {
-      if (match[0]) {
-        const directMp4 = match[0].replace(/_(?:blur|start|thumb)\.(?:jpg|webp|jpeg)$/i, '.mp4');
-        return directMp4;
-      }
-    }
-
-    const directMp4Match = html.match(/https?:\/\/[^\s"'<>]+\/media\/fans\/post_public\/[0-9]+\/[0-9]+\/[0-9]+(?:\_sd|\_hd)?\.mp4/gi);
-    if (directMp4Match && directMp4Match[0]) {
-      return directMp4Match[0];
-    }
-  } catch (e) {
-    console.error('Server error parsing xxxfollow HTML:', e);
-  }
-
-  return null;
-}
-
 function isDirectVideoUrl(url: string): boolean {
-  if (!url) return false;
   const clean = url.split('?')[0].split('#')[0].toLowerCase();
   return (
     clean.endsWith('.mp4') ||
@@ -231,7 +159,7 @@ function isDirectVideoUrl(url: string): boolean {
   );
 }
 
-function findVideoUrlInHtmlServer(html: string, baseUrl: string): string | null {
+function findVideoUrlInHtml(html: string, baseUrl: string): string | null {
   const candidates: string[] = [];
 
   // A. Check <source src="..."> or <video src="...">
@@ -248,8 +176,8 @@ function findVideoUrlInHtmlServer(html: string, baseUrl: string): string | null 
     if (m[1]) candidates.push(m[1]);
   }
 
-  // C. Check contentUrl and file in JSON-LD scripts
-  const jsonLdMatches = html.matchAll(/["'](?:contentUrl|videoUrl|streamUrl|fileUrl|video_url|stream_url|file|hls)["']\s*:\s*["']([^"']+)["']/gi);
+  // C. Check contentUrl in JSON-LD scripts
+  const jsonLdMatches = html.matchAll(/["']contentUrl["']\s*:\s*["']([^"']+)["']/gi);
   for (const m of jsonLdMatches) {
     if (m[1]) candidates.push(m[1]);
   }

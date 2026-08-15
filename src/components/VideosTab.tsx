@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Video,
   Play,
@@ -7,6 +7,7 @@ import {
   Trash2,
   ExternalLink,
   Search,
+  Filter,
   Eye,
   CheckCircle2,
   AlertCircle,
@@ -15,28 +16,18 @@ import {
   Check,
   Film,
   Sparkles,
+  Link as LinkIcon,
   Activity,
+  ShieldAlert,
   RefreshCw,
   Zap,
-  Globe,
-  Layers,
-  ShieldCheck,
-  Radio,
+  AlertTriangle,
+  FileCheck,
 } from 'lucide-react';
 import { VideoDocument, TelemetryEventDocument, ThemeMode } from '../types';
 import { extractLinksFromString, verifyVideoLink } from '../lib/videoUtils';
 import { incrementVideoViews, logTelemetryEvent } from '../lib/firebase';
-import { extractVideoFromWebpage, ExtractVideoResult } from '../lib/videoScraper';
-
-export interface BatchReportItem {
-  id: string;
-  sourceUrl: string;
-  directUrl?: string;
-  status: 'saved' | 'skipped' | 'failed' | 'processing';
-  message?: string;
-  proxyName?: string;
-  type: 'direct' | 'scraped';
-}
+import { extractVideoFromWebpage } from '../lib/videoScraper';
 
 interface VideosTabProps {
   videos: VideoDocument[];
@@ -65,22 +56,9 @@ export const VideosTab: React.FC<VideosTabProps> = ({
   const [statusMessage, setStatusMessage] = useState<string>('');
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
-  // Batch Progress & Report State for rich step-by-step badges
-  const [batchProgress, setBatchProgress] = useState<{
-    current: number;
-    total: number;
-    stage: 'checking' | 'proxying' | 'parsing' | 'validating' | 'saving' | 'success' | 'failed';
-    message: string;
-    url: string;
-    proxyName?: string;
-  } | null>(null);
-
-  const [batchReport, setBatchReport] = useState<BatchReportItem[]>([]);
-
   // Search & Filter State
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [statusFilter, setStatusFilter] = useState<'All' | 'Active' | 'Inactive'>('All');
-  const [linkTypeFilter, setLinkTypeFilter] = useState<'All' | 'Direct' | 'Webpage'>('All');
 
   // Table Row Selection for Bulk Operations (Copy, Delete, Toggle)
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -89,6 +67,7 @@ export const VideosTab: React.FC<VideosTabProps> = ({
   // Video Health Checking State
   const [healthMap, setHealthMap] = useState<Record<string, 'healthy' | 'broken' | 'checking'>>({});
   const [isCheckingHealth, setIsCheckingHealth] = useState<boolean>(false);
+  const [autoPurgeEnabled, setAutoPurgeEnabled] = useState<boolean>(true);
 
   // Video Test Play Modal State
   const [previewVideo, setPreviewVideo] = useState<VideoDocument | null>(null);
@@ -96,47 +75,9 @@ export const VideosTab: React.FC<VideosTabProps> = ({
   // Clipboard Copied indicator state
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
-  // Auto-validation tracking set
-  const autoValidatedIdsRef = useRef<Set<string>>(new Set());
-  const isAutoValidatingRef = useRef<boolean>(false);
-
   // Universal link extraction (handles double quotes "vid2.mp4", single quotes, commas, brackets, etc.)
   const parsedDirectUrls = extractLinksFromString(directUrl);
   const parsedPageUrls = extractLinksFromString(pageUrl);
-
-  // AUTOMATED LINK HEALTH VALIDATION EFFECT (Checks link playability & marks status without auto-deleting)
-  useEffect(() => {
-    if (videos.length === 0 || isAutoValidatingRef.current) return;
-
-    const unverifiedVideos = videos.filter((v) => !autoValidatedIdsRef.current.has(v.id));
-    if (unverifiedVideos.length === 0) return;
-
-    const autoValidate = async () => {
-      isAutoValidatingRef.current = true;
-
-      for (const video of unverifiedVideos) {
-        autoValidatedIdsRef.current.add(video.id);
-        setHealthMap((prev) => ({ ...prev, [video.id]: 'checking' }));
-
-        try {
-          const health = await verifyVideoLink(video.direct_url, 4500);
-
-          if (health.status === 'broken') {
-            setHealthMap((prev) => ({ ...prev, [video.id]: 'broken' }));
-          } else {
-            setHealthMap((prev) => ({ ...prev, [video.id]: 'healthy' }));
-          }
-        } catch (err) {
-          console.warn('Auto verification error:', video.id, err);
-          setHealthMap((prev) => ({ ...prev, [video.id]: 'broken' }));
-        }
-      }
-
-      isAutoValidatingRef.current = false;
-    };
-
-    autoValidate();
-  }, [videos]);
 
   // View count calculation helper for each video (supports Firestore views field & telemetry event fallback)
   const getVideoViewCount = (video: VideoDocument): number => {
@@ -154,18 +95,10 @@ export const VideosTab: React.FC<VideosTabProps> = ({
     return Math.max(directViews, eventViews);
   };
 
-  // Helper to categorize link type: Webpage Link vs Direct Stream
-  const isWebpageLink = (video: VideoDocument): boolean => {
-    const webpage = (video.source_webpage || video.page_url || '').trim();
-    const direct = (video.direct_url || '').trim();
-    return Boolean(webpage && webpage !== direct);
-  };
-
   // Summary Metrics
   const totalVideos = videos.length;
   const activeVideos = videos.filter((v) => v.is_active).length;
-  const totalWebpageLinks = videos.filter(isWebpageLink).length;
-  const totalDirectLinks = videos.filter((v) => !isWebpageLink(v)).length;
+  const brokenCount = Object.values(healthMap).filter((status) => status === 'broken').length;
 
   // Handle Test Play video with instant view count increment
   const handleTestPlayVideo = async (video: VideoDocument) => {
@@ -185,22 +118,16 @@ export const VideosTab: React.FC<VideosTabProps> = ({
     }
   };
 
-  // Filtered Videos based on Category Toggle, Search, and Status
+  // Filtered Videos
   const filteredVideos = videos.filter((video) => {
-    // 1. Link Type Category Filter
-    const isWeb = isWebpageLink(video);
-    if (linkTypeFilter === 'Direct' && isWeb) return false;
-    if (linkTypeFilter === 'Webpage' && !isWeb) return false;
-
-    // 2. Search by URL, ID, or Source Webpage
+    // Search by URL or ID
     const matchesSearch =
       searchQuery.trim() === '' ||
       video.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
       video.direct_url.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (video.page_url && video.page_url.toLowerCase().includes(searchQuery.toLowerCase())) ||
-      (video.source_webpage && video.source_webpage.toLowerCase().includes(searchQuery.toLowerCase()));
+      (video.page_url && video.page_url.toLowerCase().includes(searchQuery.toLowerCase()));
 
-    // 3. Filter by status
+    // Filter by status
     const matchesStatus =
       statusFilter === 'All' ||
       (statusFilter === 'Active' && video.is_active) ||
@@ -209,40 +136,53 @@ export const VideosTab: React.FC<VideosTabProps> = ({
     return matchesSearch && matchesStatus;
   });
 
-  // Manual Health Sweep function - checks playability and marks status for user review
-  const runHealthCheck = async () => {
+  // Health Inspection & Auto-Purging function
+  const runHealthCheckAndPurge = async (autoPurge: boolean = true) => {
     if (videos.length === 0 || isCheckingHealth) return;
 
     setIsCheckingHealth(true);
     setFeedback(null);
-    let brokenCount = 0;
-    let healthyCount = 0;
+    let purgedCount = 0;
+    let checkedCount = 0;
+
+    const newMap: Record<string, 'healthy' | 'broken' | 'checking'> = { ...healthMap };
 
     for (const video of videos) {
-      setHealthMap((prev) => ({ ...prev, [video.id]: 'checking' }));
+      newMap[video.id] = 'checking';
+      setHealthMap({ ...newMap });
 
       const check = await verifyVideoLink(video.direct_url, 4000);
+      checkedCount++;
 
       if (check.status === 'broken') {
-        setHealthMap((prev) => ({ ...prev, [video.id]: 'broken' }));
-        brokenCount++;
+        newMap[video.id] = 'broken';
+        setHealthMap({ ...newMap });
+
+        if (autoPurge) {
+          try {
+            await onDeleteVideo(video.id);
+            purgedCount++;
+          } catch (err) {
+            console.error('Failed to auto-purge broken video:', video.id, err);
+          }
+        }
       } else {
-        setHealthMap((prev) => ({ ...prev, [video.id]: 'healthy' }));
-        healthyCount++;
+        newMap[video.id] = 'healthy';
+        setHealthMap({ ...newMap });
       }
     }
 
     setIsCheckingHealth(false);
 
-    if (brokenCount > 0) {
-      setFeedback({
-        type: 'error',
-        message: `Validation sweep complete: Found ${brokenCount} broken link${brokenCount > 1 ? 's' : ''} and ${healthyCount} healthy stream${healthyCount > 1 ? 's' : ''}. Review status badges below to decide which items to delete.`,
-      });
-    } else {
+    if (purgedCount > 0) {
       setFeedback({
         type: 'success',
-        message: 'Validation sweep complete: All video streams are verified & healthy!',
+        message: `Health Monitor: Checked ${checkedCount} streams. Automatically purged ${purgedCount} broken link${purgedCount > 1 ? 's' : ''}!`,
+      });
+    } else if (checkedCount > 0) {
+      setFeedback({
+        type: 'success',
+        message: `Health Monitor: Checked ${checkedCount} video streams. All links are healthy & operational!`,
       });
     }
   };
@@ -278,48 +218,59 @@ export const VideosTab: React.FC<VideosTabProps> = ({
       return;
     }
 
-    const linksList = targets
-      .map((v) => (type === 'page' ? v.page_url || v.source_webpage || v.direct_url : v.direct_url))
-      .filter((url) => url && url.length > 0);
+    const links = targets
+      .map((v) => (type === 'page' ? v.page_url || '' : v.direct_url))
+      .filter((l) => l.length > 0)
+      .join(', ');
 
-    const commaSeparated = linksList.join(', ');
-    navigator.clipboard.writeText(commaSeparated);
+    if (!links) {
+      setFeedback({ type: 'error', message: 'No valid links found in selection.' });
+      return;
+    }
 
-    setCopiedId(type === 'all-direct' ? 'batch-all-direct' : `batch-${type}`);
-    setTimeout(() => setCopiedId(null), 2500);
-
+    navigator.clipboard.writeText(links);
+    setCopiedId(`batch-${type}`);
     setFeedback({
       type: 'success',
-      message: `Copied ${linksList.length} ${type === 'page' ? 'webpage' : 'direct stream'} link${linksList.length > 1 ? 's' : ''} to clipboard!`,
+      message: `Copied ${targets.length} comma-separated ${type === 'page' ? 'webpage' : 'direct stream'} links to clipboard!`,
     });
+    setTimeout(() => setCopiedId(null), 3000);
   };
 
-  // Bulk Delete Selected Videos
+  // Delete all selected video documents permanently
   const handleBatchDelete = async () => {
     if (selectedIds.length === 0) return;
+
+    const confirmDelete = window.confirm(
+      `Are you sure you want to permanently delete ${selectedIds.length} selected video${selectedIds.length > 1 ? 's' : ''} from Firestore?`
+    );
+
+    if (!confirmDelete) return;
+
     setIsDeletingBatch(true);
     setFeedback(null);
 
     try {
-      let count = 0;
-      for (const id of selectedIds) {
-        await onDeleteVideo(id);
-        count++;
-      }
+      const idsToDelete = [...selectedIds];
+      await Promise.all(idsToDelete.map((id) => onDeleteVideo(id)));
+
       setSelectedIds([]);
       setFeedback({
         type: 'success',
-        message: `Deleted ${count} video link${count > 1 ? 's' : ''}.`,
+        message: `Successfully deleted ${idsToDelete.length} video document${idsToDelete.length > 1 ? 's' : ''} from Firestore.`,
       });
     } catch (err) {
-      console.error('Batch delete error:', err);
-      setFeedback({ type: 'error', message: 'Failed to delete selected videos.' });
+      console.error('Error deleting batch videos:', err);
+      setFeedback({
+        type: 'error',
+        message: 'Failed to delete selected videos. Please try again.',
+      });
     } finally {
       setIsDeletingBatch(false);
     }
   };
 
-  // Handle Add Video Form Submit
+  // Handle Add Video Form Submit (Supports direct stream URLs and webpage video scraping/extraction)
   const handleAddVideo = async (e: React.FormEvent) => {
     e.preventDefault();
 
@@ -337,188 +288,81 @@ export const VideosTab: React.FC<VideosTabProps> = ({
     setIsSubmitting(true);
     setFeedback(null);
     setStatusMessage('');
-    setBatchReport([]);
 
     let addedCount = 0;
     let skippedCount = 0;
-    const newReports: BatchReportItem[] = [];
+    const errorMessages: string[] = [];
 
     try {
-      const totalItems = directList.length + (directList.length === 0 ? pageList.length : pageList.slice(directList.length).length);
-
       // 1. Process Direct Stream URLs if entered in Field 1
       for (let i = 0; i < directList.length; i++) {
         const dUrl = directList[i];
         const pUrl = pageList[i] || '';
 
-        setBatchProgress({
-          current: i + 1,
-          total: totalItems,
-          stage: 'checking',
-          message: `Inspecting direct stream format (${i + 1}/${totalItems})`,
-          url: dUrl,
-          proxyName: 'Direct Stream',
-        });
-
         if (verifyBeforeAdd) {
-          setBatchProgress({
-            current: i + 1,
-            total: totalItems,
-            stage: 'validating',
-            message: `Testing video playability (${i + 1}/${totalItems})`,
-            url: dUrl,
-            proxyName: 'Media Probe',
-          });
-
+          setStatusMessage(`Testing direct stream playability (${i + 1}/${directList.length}): ${dUrl}`);
           const health = await verifyVideoLink(dUrl, 5000);
 
           if (health.status === 'broken') {
             skippedCount++;
-            newReports.push({
-              id: `direct-${Date.now()}-${i}`,
-              sourceUrl: dUrl,
-              directUrl: dUrl,
-              status: 'skipped',
-              message: health.errorMessage || 'Failed media playability validation test',
-              type: 'direct',
-            });
+            errorMessages.push(`Direct link failed playability check: ${dUrl}`);
             continue;
           }
         }
 
-        setBatchProgress({
-          current: i + 1,
-          total: totalItems,
-          stage: 'saving',
-          message: `Saving stream to database (${i + 1}/${totalItems})`,
-          url: dUrl,
-        });
-
+        setStatusMessage(`Saving video stream (${i + 1}/${directList.length})...`);
         await onSaveVideo({
-          url: dUrl,
           direct_url: dUrl,
-          sourcePage: pUrl,
           source_webpage: pUrl,
           page_url: pUrl,
           is_active: true,
-          status: 'Active',
-          type: 'direct',
           views: 0,
-          addedAt: new Date(),
           created_at: new Date(),
         });
-
         addedCount++;
-        newReports.push({
-          id: `direct-${Date.now()}-${i}`,
-          sourceUrl: dUrl,
-          directUrl: dUrl,
-          status: 'saved',
-          message: 'Saved directly to active streams',
-          type: 'direct',
-        });
       }
 
       // 2. Process Webpage URLs entered in Field 2 (Scrape & Extract Embedded Video Streams)
       if (pageList.length > 0) {
+        // Filter out webpage links already paired 1-to-1 with direct URLs if directList was provided
         const webpagesToScrape = directList.length === 0 ? pageList : pageList.slice(directList.length);
 
         if (webpagesToScrape.length > 0) {
-          const startIndex = directList.length;
+          setStatusMessage(`Scraping webpage HTML & extracting video source (${webpagesToScrape.length} page${webpagesToScrape.length > 1 ? 's' : ''})...`);
 
-          const extractionResults = await extractVideoFromWebpage(
-            webpagesToScrape,
-            ({ index, total, stage, message, currentUrl, proxyName }) => {
-              setBatchProgress({
-                current: startIndex + index,
-                total: totalItems,
-                stage: stage as any,
-                message: `[${startIndex + index}/${totalItems}] ${message}`,
-                url: currentUrl,
-                proxyName,
-              });
-            }
-          );
+          const extractionResults = await extractVideoFromWebpage(webpagesToScrape);
 
-          for (let k = 0; k < extractionResults.length; k++) {
-            const res = extractionResults[k];
-            const currentItemNumber = startIndex + k + 1;
-
+          for (const res of extractionResults) {
             if (res.success && res.direct_url) {
               if (verifyBeforeAdd) {
-                setBatchProgress({
-                  current: currentItemNumber,
-                  total: totalItems,
-                  stage: 'validating',
-                  message: `Testing extracted stream playability (${currentItemNumber}/${totalItems})`,
-                  url: res.direct_url,
-                  proxyName: 'Media Probe',
-                });
-
+                setStatusMessage(`Testing extracted stream playability: ${res.direct_url}`);
                 const health = await verifyVideoLink(res.direct_url, 5000);
                 if (health.status === 'broken') {
                   skippedCount++;
-                  newReports.push({
-                    id: `scrape-${Date.now()}-${k}`,
-                    sourceUrl: res.source_webpage,
-                    directUrl: res.direct_url,
-                    status: 'skipped',
-                    message: health.errorMessage || 'Extracted stream failed playability test',
-                    proxyName: res.extractedVia,
-                    type: 'scraped',
-                  });
+                  errorMessages.push(`Extracted stream from ${res.source_webpage} failed playability test.`);
                   continue;
                 }
               }
 
-              setBatchProgress({
-                current: currentItemNumber,
-                total: totalItems,
-                stage: 'saving',
-                message: `Storing extracted video stream (${currentItemNumber}/${totalItems})`,
-                url: res.direct_url,
-              });
-
+              setStatusMessage(`Storing extracted video stream from ${res.source_webpage}...`);
               await onSaveVideo({
-                url: res.direct_url,
                 direct_url: res.direct_url,
-                sourcePage: res.source_webpage,
                 source_webpage: res.source_webpage,
                 page_url: res.source_webpage,
                 is_active: true,
-                status: 'Active',
-                type: 'scraped',
                 views: 0,
-                addedAt: new Date(),
                 created_at: new Date(),
               });
-
               addedCount++;
-              newReports.push({
-                id: `scrape-${Date.now()}-${k}`,
-                sourceUrl: res.source_webpage,
-                directUrl: res.direct_url,
-                status: 'saved',
-                message: 'Extracted & active',
-                proxyName: res.extractedVia,
-                type: 'scraped',
-              });
             } else {
               skippedCount++;
-              newReports.push({
-                id: `scrape-${Date.now()}-${k}`,
-                sourceUrl: res.source_webpage,
-                status: 'failed',
-                message: res.error || 'Could not extract video stream from webpage HTML',
-                proxyName: res.extractedVia,
-                type: 'scraped',
-              });
+              errorMessages.push(
+                res.error || `Could not extract video stream from webpage: ${res.source_webpage}`
+              );
             }
           }
         }
       }
-
-      setBatchReport(newReports);
 
       // 3. UI Toast/Feedback Result
       if (addedCount > 0) {
@@ -526,15 +370,18 @@ export const VideosTab: React.FC<VideosTabProps> = ({
           type: 'success',
           message:
             skippedCount > 0
-              ? `Successfully processed: ${addedCount} stream${addedCount > 1 ? 's' : ''} saved to database (${skippedCount} invalid/broken skipped). Review badges below.`
-              : `Successfully added and verified ${addedCount} video stream${addedCount > 1 ? 's' : ''}!`,
+              ? `Successfully extracted & stored ${addedCount} video stream${addedCount > 1 ? 's' : ''}! (${skippedCount} link${skippedCount > 1 ? 's' : ''} failed extraction or playability)`
+              : `Successfully extracted video stream and stored ${addedCount} video document${addedCount > 1 ? 's' : ''} to Firestore!`,
         });
         setDirectUrl('');
         setPageUrl('');
       } else {
         setFeedback({
           type: 'error',
-          message: 'No video streams were added. Review individual error badges below.',
+          message:
+            errorMessages.length > 0
+              ? errorMessages.join(' | ')
+              : 'Extraction failed: No valid video stream (.mp4, .m3u8) was found embedded on the webpage(s).',
         });
       }
     } catch (err: any) {
@@ -545,7 +392,6 @@ export const VideosTab: React.FC<VideosTabProps> = ({
       });
     } finally {
       setIsSubmitting(false);
-      setBatchProgress(null);
       setStatusMessage('');
     }
   };
@@ -559,8 +405,8 @@ export const VideosTab: React.FC<VideosTabProps> = ({
 
   return (
     <div className="space-y-8">
-      {/* 1. TOP SUMMARY METRICS & CATEGORY TOTALS */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      {/* 1. HEADER / SUMMARY BAR */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         {/* Metric 1: Total Videos */}
         <div
           className={`p-5 rounded-2xl border transition-all ${
@@ -569,82 +415,37 @@ export const VideosTab: React.FC<VideosTabProps> = ({
         >
           <div className="flex items-center justify-between">
             <span className={`text-xs font-bold uppercase tracking-wider ${isDark ? 'text-zinc-400' : 'text-zinc-500'}`}>
-              Total Active Videos
+              Total Videos
             </span>
             <div className="p-2.5 rounded-xl bg-red-600/10 text-red-500 border border-red-600/20">
               <Film className="w-5 h-5 text-red-500" />
             </div>
           </div>
-          <div className="mt-3 flex items-baseline justify-between gap-2 flex-wrap">
-            <div className="flex items-baseline gap-2">
-              <span className="text-3xl font-black tracking-tight font-mono">{totalVideos}</span>
-              <span className={`text-xs font-bold ${isDark ? 'text-zinc-400' : 'text-zinc-500'}`}>validated streams</span>
-            </div>
-            <span className={`text-xs font-extrabold px-2.5 py-1 rounded-full border ${
-              isDark ? 'bg-emerald-950/80 text-emerald-400 border-emerald-900' : 'bg-emerald-50 text-emerald-700 border-emerald-200'
-            }`}>
-              {activeVideos} Active ({totalVideos > 0 ? Math.round((activeVideos / totalVideos) * 100) : 0}%)
-            </span>
+          <div className="mt-3 flex items-baseline gap-2">
+            <span className="text-3xl font-black tracking-tight font-mono">{totalVideos}</span>
+            <span className={`text-xs font-bold ${isDark ? 'text-zinc-400' : 'text-zinc-500'}`}>documents</span>
           </div>
         </div>
 
-        {/* Metric 2: Category Totals (Direct Stream Links vs Webpage Links) */}
+        {/* Metric 2: Active Videos */}
         <div
           className={`p-5 rounded-2xl border transition-all ${
             isDark ? 'bg-zinc-900/90 border-zinc-800 text-white' : 'bg-white border-zinc-200 text-zinc-900'
           }`}
         >
-          <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center justify-between">
             <span className={`text-xs font-bold uppercase tracking-wider ${isDark ? 'text-zinc-400' : 'text-zinc-500'}`}>
-              Category Breakdown
+              Active Streams
             </span>
-            <div className="p-2 rounded-xl bg-blue-600/10 text-blue-500 border border-blue-600/20">
-              <Layers className="w-4 h-4 text-blue-500" />
+            <div className="p-2.5 rounded-xl bg-emerald-600/10 text-emerald-500 border border-emerald-600/20">
+              <CheckCircle2 className="w-5 h-5 text-emerald-500" />
             </div>
           </div>
-
-          <div className="grid grid-cols-2 gap-3 mt-1">
-            {/* Direct Stream Total */}
-            <button
-              onClick={() => setLinkTypeFilter('Direct')}
-              className={`p-3 rounded-xl border text-left transition-all ${
-                linkTypeFilter === 'Direct'
-                  ? 'bg-amber-500/20 border-amber-500 text-white ring-2 ring-amber-500/30'
-                  : isDark
-                  ? 'bg-zinc-950 border-zinc-800 hover:border-amber-500/50'
-                  : 'bg-zinc-50 border-zinc-200 hover:border-amber-400'
-              }`}
-            >
-              <div className="flex items-center gap-1.5 text-[11px] font-extrabold text-amber-400 uppercase tracking-wider">
-                <Video className="w-3.5 h-3.5 text-amber-400" />
-                <span>Direct Streams</span>
-              </div>
-              <div className="mt-1 flex items-baseline gap-1.5">
-                <span className="text-2xl font-black font-mono">{totalDirectLinks}</span>
-                <span className="text-[10px] text-zinc-400 font-medium">links</span>
-              </div>
-            </button>
-
-            {/* Webpage Links Total */}
-            <button
-              onClick={() => setLinkTypeFilter('Webpage')}
-              className={`p-3 rounded-xl border text-left transition-all ${
-                linkTypeFilter === 'Webpage'
-                  ? 'bg-blue-500/20 border-blue-500 text-white ring-2 ring-blue-500/30'
-                  : isDark
-                  ? 'bg-zinc-950 border-zinc-800 hover:border-blue-500/50'
-                  : 'bg-zinc-50 border-zinc-200 hover:border-blue-400'
-              }`}
-            >
-              <div className="flex items-center gap-1.5 text-[11px] font-extrabold text-blue-400 uppercase tracking-wider">
-                <Globe className="w-3.5 h-3.5 text-blue-400" />
-                <span>Webpage Links</span>
-              </div>
-              <div className="mt-1 flex items-baseline gap-1.5">
-                <span className="text-2xl font-black font-mono">{totalWebpageLinks}</span>
-                <span className="text-[10px] text-zinc-400 font-medium">scraped</span>
-              </div>
-            </button>
+          <div className="mt-3 flex items-baseline gap-2">
+            <span className="text-3xl font-black tracking-tight font-mono text-emerald-500">{activeVideos}</span>
+            <span className={`text-xs font-extrabold px-2 py-0.5 rounded-full border ${isDark ? 'bg-emerald-950/80 text-emerald-400 border-emerald-900' : 'bg-emerald-50 text-emerald-700 border-emerald-200'}`}>
+              {totalVideos > 0 ? `${Math.round((activeVideos / totalVideos) * 100)}% active` : '0%'}
+            </span>
           </div>
         </div>
       </div>
@@ -663,7 +464,7 @@ export const VideosTab: React.FC<VideosTabProps> = ({
             <h2 className="text-lg sm:text-xl font-black tracking-tight">Add New Video Stream</h2>
           </div>
           <p className={`text-xs mt-1 ${isDark ? 'text-zinc-400' : 'text-zinc-500'}`}>
-            Register direct video links (.mp4, .m3u8, webm) or enter webpage URLs to automatically scrape raw video streams.
+            Register direct video links (.mp4, .m3u8, webm) and optional referrer web links in Firestore.
           </p>
         </div>
 
@@ -719,7 +520,7 @@ export const VideosTab: React.FC<VideosTabProps> = ({
                 />
               </div>
               <p className={`text-[11px] mt-1 ${isDark ? 'text-zinc-500' : 'text-zinc-400'}`}>
-                Direct stream URLs (.mp4, .m3u8, .webm).
+                Tip: You can paste multiple links separated by commas (<code>,</code>) or line breaks.
               </p>
             </div>
 
@@ -750,7 +551,7 @@ export const VideosTab: React.FC<VideosTabProps> = ({
                 />
               </div>
               <p className={`text-[11px] mt-1 ${isDark ? 'text-zinc-500' : 'text-zinc-400'}`}>
-                Auto Scraper: Scrapes embedded video stream (.mp4, .m3u8) from full webpage URLs.
+                Auto Scraper: Enter webpage URL(s). Our resolver extracts the raw embedded video stream (.mp4, .m3u8, CDN) and stores it to Firestore.
               </p>
             </div>
           </div>
@@ -765,7 +566,7 @@ export const VideosTab: React.FC<VideosTabProps> = ({
                   className="rounded border-zinc-700 text-red-600 focus:ring-red-600 bg-zinc-950"
                 />
                 <span className={isDark ? 'text-zinc-300' : 'text-zinc-700'}>
-                  Validate playability before adding
+                  Verify stream playability before adding
                 </span>
               </label>
 
@@ -800,179 +601,16 @@ export const VideosTab: React.FC<VideosTabProps> = ({
             </button>
           </div>
 
-          {/* Live Step-by-Step Batch Progress Display */}
-          {batchProgress && (
-            <div className="p-4 rounded-xl border bg-zinc-950 border-red-900/50 space-y-2.5 shadow-inner">
-              <div className="flex items-center justify-between gap-2 flex-wrap text-xs">
-                <div className="flex items-center gap-2">
-                  <RefreshCw className="w-3.5 h-3.5 animate-spin text-red-500 flex-shrink-0" />
-                  <span className="font-bold text-zinc-200">
-                    {batchProgress.message}
-                  </span>
-                </div>
-                {batchProgress.proxyName && (
-                  <span className="px-2 py-0.5 rounded-full bg-blue-950/80 text-blue-400 border border-blue-800 text-[10px] font-mono font-bold flex items-center gap-1">
-                    <Radio className="w-2.5 h-2.5 text-blue-400 animate-pulse" />
-                    Proxy: {batchProgress.proxyName}
-                  </span>
-                )}
-              </div>
-
-              {/* Animated Progress Bar */}
-              <div className="w-full bg-zinc-900 rounded-full h-2 overflow-hidden border border-zinc-800">
-                <div
-                  className="bg-gradient-to-r from-red-600 to-amber-500 h-2 rounded-full transition-all duration-300"
-                  style={{
-                    width: `${Math.max(5, (batchProgress.current / batchProgress.total) * 100)}%`,
-                  }}
-                />
-              </div>
-
-              <div className="flex items-center justify-between text-[11px] text-zinc-500 font-mono">
-                <span className="truncate max-w-sm">{batchProgress.url}</span>
-                <span>
-                  {batchProgress.current} / {batchProgress.total} (
-                  {Math.round((batchProgress.current / batchProgress.total) * 100)}%)
-                </span>
-              </div>
-            </div>
-          )}
-
-          {/* Batch Processing Results Breakdown */}
-          {batchReport.length > 0 && !isSubmitting && (
-            <div className="mt-4 pt-4 border-t border-zinc-800/80 space-y-3">
-              <div className="flex items-center justify-between flex-wrap gap-2">
-                <div className="flex items-center gap-2">
-                  <ShieldCheck className="w-4 h-4 text-emerald-500" />
-                  <span className="text-xs font-black uppercase tracking-wider text-zinc-300">
-                    Batch Extraction Results ({batchReport.length} items)
-                  </span>
-                </div>
-
-                <div className="flex items-center gap-2 flex-wrap">
-                  <span className="px-2 py-0.5 rounded-md bg-emerald-950/60 text-emerald-400 border border-emerald-800 text-[10px] font-bold">
-                    {batchReport.filter((r) => r.status === 'saved').length} Saved
-                  </span>
-                  {batchReport.some((r) => r.status === 'skipped') && (
-                    <span className="px-2 py-0.5 rounded-md bg-amber-950/60 text-amber-400 border border-amber-800 text-[10px] font-bold">
-                      {batchReport.filter((r) => r.status === 'skipped').length} Skipped
-                    </span>
-                  )}
-                  {batchReport.some((r) => r.status === 'failed') && (
-                    <span className="px-2 py-0.5 rounded-md bg-red-950/60 text-red-400 border border-red-800 text-[10px] font-bold">
-                      {batchReport.filter((r) => r.status === 'failed').length} Failed
-                    </span>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => setBatchReport([])}
-                    className="p-1 text-zinc-400 hover:text-white rounded hover:bg-zinc-800"
-                    title="Dismiss Results"
-                  >
-                    <X className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              </div>
-
-              {/* Individual Link Badges */}
-              <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
-                {batchReport.map((item) => (
-                  <div
-                    key={item.id}
-                    className={`p-3 rounded-xl border text-xs flex flex-col md:flex-row md:items-center justify-between gap-3 ${
-                      item.status === 'saved'
-                        ? 'bg-emerald-950/20 border-emerald-800/40 text-emerald-300'
-                        : item.status === 'skipped'
-                        ? 'bg-amber-950/20 border-amber-800/40 text-amber-300'
-                        : 'bg-red-950/20 border-red-800/40 text-red-300'
-                    }`}
-                  >
-                    <div className="space-y-1 min-w-0 flex-1">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        {item.status === 'saved' ? (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-600 text-white font-extrabold text-[10px] uppercase">
-                            <Check className="w-3 h-3" /> Saved & Active
-                          </span>
-                        ) : item.status === 'skipped' ? (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-600 text-white font-extrabold text-[10px] uppercase">
-                            <AlertCircle className="w-3 h-3" /> Skipped
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-red-600 text-white font-extrabold text-[10px] uppercase">
-                            <X className="w-3 h-3" /> Extraction Failed
-                          </span>
-                        )}
-
-                        <span className="text-[10px] font-mono text-zinc-400">
-                          {item.type === 'scraped' ? 'Webpage Scraping' : 'Direct Link'}
-                        </span>
-
-                        {item.proxyName && (
-                          <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-zinc-800 text-zinc-300">
-                            {item.proxyName}
-                          </span>
-                        )}
-                      </div>
-
-                      <p className="font-mono text-[11px] text-zinc-300 truncate" title={item.sourceUrl}>
-                        {item.sourceUrl}
-                      </p>
-
-                      {item.directUrl && item.status === 'saved' && (
-                        <p className="font-mono text-[10px] text-emerald-400/90 truncate" title={item.directUrl}>
-                          → Stream: {item.directUrl}
-                        </p>
-                      )}
-
-                      {item.message && item.status !== 'saved' && (
-                        <p className="text-[11px] font-medium text-red-400">
-                          {item.message}
-                        </p>
-                      )}
-                    </div>
-
-                    {item.directUrl && item.status === 'saved' && (
-                      <div className="flex items-center gap-2 flex-shrink-0">
-                        <button
-                          type="button"
-                          onClick={() => handleCopy(item.directUrl!, `report-${item.id}`)}
-                          className="px-2.5 py-1 rounded-lg bg-zinc-900 border border-zinc-700 hover:bg-zinc-800 text-zinc-200 text-[11px] font-bold flex items-center gap-1"
-                        >
-                          {copiedId === `report-${item.id}` ? (
-                            <Check className="w-3 h-3 text-emerald-400" />
-                          ) : (
-                            <Copy className="w-3 h-3" />
-                          )}
-                          <span>Copy Stream</span>
-                        </button>
-
-                        <button
-                          type="button"
-                          onClick={() =>
-                            setPreviewVideo({
-                              id: item.id,
-                              direct_url: item.directUrl!,
-                              is_active: true,
-                              views: 0,
-                              created_at: new Date(),
-                            })
-                          }
-                          className="px-2.5 py-1 rounded-lg bg-red-600 hover:bg-red-700 text-white text-[11px] font-bold flex items-center gap-1 shadow-sm"
-                        >
-                          <Play className="w-3 h-3 fill-white" />
-                          <span>Test Play</span>
-                        </button>
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
+          {statusMessage && (
+            <div className="p-3 bg-red-950/40 border border-red-800/60 rounded-xl text-xs font-mono text-red-300 flex items-center gap-2 animate-pulse">
+              <RefreshCw className="w-3.5 h-3.5 animate-spin text-red-400 flex-shrink-0" />
+              <span>{statusMessage}</span>
             </div>
           )}
         </form>
       </div>
 
-      {/* HEALTH VALIDATOR PANEL */}
+      {/* HEALTH MONITOR & AUTO-PURGE PANEL */}
       <div
         className={`p-5 rounded-2xl border transition-all ${
           isDark ? 'bg-zinc-900/90 border-zinc-800 text-white' : 'bg-white border-zinc-200 text-zinc-900'
@@ -985,102 +623,50 @@ export const VideosTab: React.FC<VideosTabProps> = ({
             </div>
             <div>
               <h3 className="text-sm font-black flex items-center gap-2">
-                <span>Link Health Status Checker</span>
+                <span>Automated Link Health Monitor</span>
+                {brokenCount > 0 && (
+                  <span className="px-2 py-0.5 rounded-md bg-red-600 text-white text-[10px] font-extrabold">
+                    {brokenCount} Broken Detected
+                  </span>
+                )}
               </h3>
               <p className={`text-xs mt-0.5 ${isDark ? 'text-zinc-400' : 'text-zinc-500'}`}>
-                Scans stream links to verify playability status. Clearly highlights active vs. broken links so you can inspect and decide when to delete them.
+                Scans existing stream links for 404s/network errors and automatically purges broken streams from Firestore.
               </p>
             </div>
           </div>
 
           <div className="flex items-center gap-3 flex-wrap">
             <button
-              onClick={runHealthCheck}
+              onClick={() => runHealthCheckAndPurge(true)}
               disabled={isCheckingHealth || videos.length === 0}
               className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-extrabold flex items-center gap-2 shadow-sm transition-all active:scale-95 disabled:opacity-50"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${isCheckingHealth ? 'animate-spin' : ''}`} />
-              <span>{isCheckingHealth ? 'Validating Streams...' : 'Scan Stream Health'}</span>
+              <span>{isCheckingHealth ? 'Scanning & Purging...' : 'Scan & Auto-Purge Broken Links'}</span>
             </button>
           </div>
         </div>
       </div>
 
-      {/* 3. VIDEOS DATA DIRECTORY TABLE WITH CATEGORY TOGGLE */}
+      {/* 3. VIDEOS DATA TABLE */}
       <div
         className={`border rounded-2xl shadow-sm overflow-hidden ${
           isDark ? 'bg-zinc-900/90 border-zinc-800 text-white' : 'bg-white border-zinc-200 text-zinc-900'
         }`}
       >
-        {/* Category Link Type Toggle Switcher Bar */}
-        <div className="p-4 border-b border-zinc-800/80 bg-zinc-950/60 flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div>
-            <span className="text-[11px] font-extrabold uppercase tracking-wider text-zinc-400 block mb-1">
-              Category Filter Toggle
-            </span>
-            <div className="flex items-center gap-1.5 p-1.5 rounded-2xl border bg-zinc-900 border-zinc-800 text-xs flex-wrap">
-              <button
-                type="button"
-                onClick={() => setLinkTypeFilter('All')}
-                className={`px-4 py-2 rounded-xl font-extrabold transition-all flex items-center gap-2 ${
-                  linkTypeFilter === 'All'
-                    ? 'bg-red-600 text-white shadow-md shadow-red-600/30'
-                    : 'text-zinc-400 hover:text-white hover:bg-zinc-800'
-                }`}
-              >
-                <span>All Links</span>
-                <span className="px-2 py-0.5 rounded-full bg-black/40 text-[10px] font-mono">
-                  {totalVideos}
-                </span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setLinkTypeFilter('Direct')}
-                className={`px-4 py-2 rounded-xl font-extrabold transition-all flex items-center gap-2 ${
-                  linkTypeFilter === 'Direct'
-                    ? 'bg-amber-600 text-white shadow-md shadow-amber-600/30'
-                    : 'text-zinc-400 hover:text-white hover:bg-zinc-800'
-                }`}
-              >
-                <Video className="w-3.5 h-3.5 text-amber-300" />
-                <span>Direct Stream Links</span>
-                <span className="px-2 py-0.5 rounded-full bg-black/40 text-[10px] font-mono">
-                  {totalDirectLinks}
-                </span>
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setLinkTypeFilter('Webpage')}
-                className={`px-4 py-2 rounded-xl font-extrabold transition-all flex items-center gap-2 ${
-                  linkTypeFilter === 'Webpage'
-                    ? 'bg-blue-600 text-white shadow-md shadow-blue-600/30'
-                    : 'text-zinc-400 hover:text-white hover:bg-zinc-800'
-                }`}
-              >
-                <Globe className="w-3.5 h-3.5 text-blue-300" />
-                <span>Webpage Links</span>
-                <span className="px-2 py-0.5 rounded-full bg-black/40 text-[10px] font-mono">
-                  {totalWebpageLinks}
-                </span>
-              </button>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <span className="text-xs font-bold text-zinc-400">
-              Showing <strong className="text-white font-mono">{filteredVideos.length}</strong> of{' '}
-              <span className="font-mono">{totalVideos}</span> links
-            </span>
-          </div>
-        </div>
-
-        {/* Table Controls & Search */}
+        {/* Table Controls & Batch Export Bar */}
         <div className="p-4 sm:p-5 border-b border-zinc-800/60 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
           <div className="flex items-center gap-2 flex-wrap">
             <Film className="w-5 h-5 text-red-600" />
             <h2 className="text-lg font-black">Registered Videos Directory</h2>
+            <span
+              className={`px-2.5 py-0.5 rounded-lg text-xs font-extrabold border ${
+                isDark ? 'bg-red-950 text-red-400 border-red-900' : 'bg-red-50 text-red-700 border-red-200'
+              }`}
+            >
+              {filteredVideos.length} Items
+            </span>
 
             {/* Quick Button: Copy All Filtered Direct Links as Comma-Separated */}
             {filteredVideos.length > 0 && (
@@ -1097,7 +683,7 @@ export const VideosTab: React.FC<VideosTabProps> = ({
                 <span>
                   {copiedId === 'batch-all-direct'
                     ? 'Copied All Comma-Separated!'
-                    : 'Copy Direct Links (Comma Separated)'}
+                    : 'Copy All Direct Links (Comma Separated)'}
                 </span>
               </button>
             )}
@@ -1160,7 +746,7 @@ export const VideosTab: React.FC<VideosTabProps> = ({
                 className="px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-white font-extrabold flex items-center gap-1.5 transition-all"
               >
                 <Copy className="w-3.5 h-3.5 text-red-400" />
-                <span>Copy Selected Direct Links</span>
+                <span>Copy Selected Direct Links (Comma Separated)</span>
               </button>
 
               <button
@@ -1211,12 +797,11 @@ export const VideosTab: React.FC<VideosTabProps> = ({
                     title="Select / Deselect All"
                   />
                 </th>
-                <th className="py-3.5 px-4">Doc ID</th>
-                <th className="py-3.5 px-4">Category</th>
+                <th className="py-3.5 px-4">Firestore Doc ID</th>
                 <th className="py-3.5 px-4">Direct Stream URL</th>
                 <th className="py-3.5 px-4">Webpage URL</th>
                 <th className="py-3.5 px-4 text-center">Status</th>
-                <th className="py-3.5 px-4 text-center">Stream Validation</th>
+                <th className="py-3.5 px-4 text-center">Stream Health</th>
                 <th className="py-3.5 px-4 text-center">Views</th>
                 <th className="py-3.5 px-4 text-right">Actions</th>
               </tr>
@@ -1224,22 +809,15 @@ export const VideosTab: React.FC<VideosTabProps> = ({
             <tbody className={`divide-y ${isDark ? 'divide-zinc-800/60' : 'divide-zinc-100'}`}>
               {filteredVideos.length === 0 ? (
                 <tr>
-                  <td colSpan={9} className={`py-12 text-center ${isDark ? 'text-zinc-500' : 'text-zinc-400'}`}>
+                  <td colSpan={7} className={`py-12 text-center ${isDark ? 'text-zinc-500' : 'text-zinc-400'}`}>
                     <Film className="w-8 h-8 mx-auto mb-2 text-zinc-600 opacity-60" />
-                    <p className="font-bold text-sm">
-                      No {linkTypeFilter !== 'All' ? linkTypeFilter.toLowerCase() : ''} videos found.
-                    </p>
-                    <p className="text-xs mt-1">
-                      {linkTypeFilter !== 'All'
-                        ? `Switch the category toggle above to "All Links" or add new ${linkTypeFilter.toLowerCase()} links.`
-                        : 'Add a video using the form above or adjust your search filters.'}
-                    </p>
+                    <p className="font-bold text-sm">No videos found.</p>
+                    <p className="text-xs mt-1">Add a video using the form above or adjust your search filters.</p>
                   </td>
                 </tr>
               ) : (
                 filteredVideos.map((video) => {
                   const isSelected = selectedIds.includes(video.id);
-                  const isWeb = isWebpageLink(video);
 
                   return (
                     <tr
@@ -1266,196 +844,198 @@ export const VideosTab: React.FC<VideosTabProps> = ({
 
                       {/* Firestore Doc ID */}
                       <td className="py-3.5 px-4 font-mono font-bold text-red-500">
-                        <div className="flex items-center gap-1.5">
-                          <span className="truncate max-w-[90px]" title={video.id}>
-                            {video.id}
-                          </span>
-                          <button
-                            onClick={() => handleCopy(video.id, `id-${video.id}`)}
-                            className="p-1 rounded hover:bg-zinc-800 text-zinc-400 hover:text-white"
-                            title="Copy ID"
-                          >
-                            {copiedId === `id-${video.id}` ? (
-                              <Check className="w-3 h-3 text-emerald-500" />
-                            ) : (
-                              <Copy className="w-3 h-3" />
-                            )}
-                          </button>
-                        </div>
-                      </td>
-
-                      {/* Category Badge */}
-                      <td className="py-3.5 px-4">
-                        {isWeb ? (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-blue-950/80 text-blue-400 border border-blue-800/80 text-[10px] font-black uppercase tracking-wider">
-                            <Globe className="w-3 h-3 text-blue-400" />
-                            Webpage Link
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-amber-950/80 text-amber-400 border border-amber-800/80 text-[10px] font-black uppercase tracking-wider">
-                            <Video className="w-3 h-3 text-amber-400" />
-                            Direct Stream
-                          </span>
-                        )}
-                      </td>
-
-                      {/* Direct Stream URL */}
-                      <td className="py-3.5 px-4 max-w-xs truncate font-mono text-[11px]">
-                        <div className="flex items-center gap-1.5">
-                          <span className={`truncate ${isDark ? 'text-zinc-200' : 'text-zinc-800'}`} title={video.direct_url}>
-                            {video.direct_url}
-                          </span>
-                          <button
-                            onClick={() => handleCopy(video.direct_url, `url-${video.id}`)}
-                            className="p-1 rounded hover:bg-zinc-800 text-zinc-400 hover:text-white flex-shrink-0"
-                            title="Copy Direct URL"
-                          >
-                            {copiedId === `url-${video.id}` ? (
-                              <Check className="w-3 h-3 text-emerald-500" />
-                            ) : (
-                              <Copy className="w-3 h-3" />
-                            )}
-                          </button>
-                        </div>
-                      </td>
-
-                      {/* Webpage URL */}
-                      <td className="py-3.5 px-4 max-w-xs truncate font-mono text-[11px] text-zinc-400">
-                        {video.page_url || video.source_webpage ? (
-                          <a
-                            href={video.page_url || video.source_webpage}
-                            target="_blank"
-                            rel="noreferrer"
-                            className="hover:text-red-400 underline inline-flex items-center gap-1 truncate"
-                          >
-                            <span>{video.page_url || video.source_webpage}</span>
-                            <ExternalLink className="w-3 h-3 flex-shrink-0" />
-                          </a>
-                        ) : (
-                          <span className="text-zinc-600 italic">None</span>
-                        )}
-                      </td>
-
-                      {/* Status Toggle Badge */}
-                      <td className="py-3.5 px-4 text-center">
+                      <div className="flex items-center gap-1.5">
+                        <span className="truncate max-w-[100px]" title={video.id}>
+                          {video.id}
+                        </span>
                         <button
-                          onClick={() => onToggleVideoStatus(video.id, video.is_active)}
-                          className="transition-transform active:scale-95"
-                          title="Click to toggle status"
+                          onClick={() => handleCopy(video.id, `id-${video.id}`)}
+                          className="p-1 rounded hover:bg-zinc-800 text-zinc-400 hover:text-white"
+                          title="Copy ID"
                         >
-                          {video.is_active ? (
-                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-emerald-600 text-white shadow-sm hover:bg-emerald-500">
-                              <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
-                              Active
-                            </span>
+                          {copiedId === `id-${video.id}` ? (
+                            <Check className="w-3 h-3 text-emerald-500" />
                           ) : (
-                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-zinc-700 text-zinc-300 hover:bg-zinc-600">
-                              <span className="w-1.5 h-1.5 rounded-full bg-zinc-400" />
-                              Inactive
-                            </span>
+                            <Copy className="w-3 h-3" />
                           )}
                         </button>
-                      </td>
+                      </div>
+                    </td>
 
-                      {/* Stream Validation */}
-                      <td className="py-3.5 px-4 text-center">
-                        {healthMap[video.id] === 'checking' ? (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-400 border border-amber-500/30 text-[10px] font-extrabold animate-pulse">
-                            <RefreshCw className="w-3 h-3 animate-spin" />
-                            Validating...
-                          </span>
-                        ) : healthMap[video.id] === 'broken' ? (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-red-500/20 text-red-400 border border-red-500/30 text-[10px] font-extrabold">
-                            <AlertCircle className="w-3 h-3 text-red-400" />
-                            Broken Link
+                    {/* Direct Stream URL */}
+                    <td className="py-3.5 px-4 max-w-xs truncate font-mono text-[11px]">
+                      <div className="flex items-center gap-1.5">
+                        <span className={`truncate ${isDark ? 'text-zinc-200' : 'text-zinc-800'}`} title={video.direct_url}>
+                          {video.direct_url}
+                        </span>
+                        <button
+                          onClick={() => handleCopy(video.direct_url, `url-${video.id}`)}
+                          className="p-1 rounded hover:bg-zinc-800 text-zinc-400 hover:text-white flex-shrink-0"
+                          title="Copy Direct URL"
+                        >
+                          {copiedId === `url-${video.id}` ? (
+                            <Check className="w-3 h-3 text-emerald-500" />
+                          ) : (
+                            <Copy className="w-3 h-3" />
+                          )}
+                        </button>
+                      </div>
+                    </td>
+
+                    {/* Webpage URL */}
+                    <td className="py-3.5 px-4 max-w-xs truncate font-mono text-[11px] text-zinc-400">
+                      {video.page_url ? (
+                        <a
+                          href={video.page_url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="hover:text-red-400 underline inline-flex items-center gap-1 truncate"
+                        >
+                          <span>{video.page_url}</span>
+                          <ExternalLink className="w-3 h-3 flex-shrink-0" />
+                        </a>
+                      ) : (
+                        <span className="text-zinc-500 italic">None</span>
+                      )}
+                    </td>
+
+                    {/* Status Toggle Badge */}
+                    <td className="py-3.5 px-4 text-center">
+                      <button
+                        onClick={() => onToggleVideoStatus(video.id, video.is_active)}
+                        className="transition-transform active:scale-95"
+                        title="Click to toggle status"
+                      >
+                        {video.is_active ? (
+                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-emerald-600 text-white shadow-sm hover:bg-emerald-500">
+                            <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
+                            Active
                           </span>
                         ) : (
-                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-[10px] font-extrabold">
-                            <CheckCircle2 className="w-3 h-3 text-emerald-400" />
-                            Active Stream
+                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-zinc-700 text-zinc-300 hover:bg-zinc-600">
+                            <span className="w-1.5 h-1.5 rounded-full bg-zinc-400" />
+                            Inactive
                           </span>
                         )}
-                      </td>
+                      </button>
+                    </td>
 
-                      {/* Views */}
-                      <td className="py-3.5 px-4 text-center font-mono font-bold text-xs text-blue-500">
-                        <span className="inline-flex items-center gap-1">
-                          <Eye className="w-3.5 h-3.5" />
-                          {getVideoViewCount(video).toLocaleString()}
+                    {/* Stream Health */}
+                    <td className="py-3.5 px-4 text-center">
+                      {healthMap[video.id] === 'checking' ? (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-400 border border-amber-500/30 text-[10px] font-extrabold animate-pulse">
+                          <RefreshCw className="w-3 h-3 animate-spin" />
+                          Testing...
                         </span>
-                      </td>
+                      ) : healthMap[video.id] === 'healthy' ? (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-[10px] font-extrabold">
+                          <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                          Healthy
+                        </span>
+                      ) : healthMap[video.id] === 'broken' ? (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-red-600/20 text-red-400 border border-red-600/30 text-[10px] font-extrabold">
+                          <ShieldAlert className="w-3 h-3 text-red-400" />
+                          Broken Link
+                        </span>
+                      ) : (
+                        <button
+                          onClick={async () => {
+                            setHealthMap((prev) => ({ ...prev, [video.id]: 'checking' }));
+                            const res = await verifyVideoLink(video.direct_url, 4000);
+                            setHealthMap((prev) => ({ ...prev, [video.id]: res.status }));
+                          }}
+                          className="px-2 py-0.5 rounded-md bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-white text-[10px] font-extrabold border border-zinc-700 transition-all"
+                          title="Click to check link health"
+                        >
+                          Verify Link
+                        </button>
+                      )}
+                    </td>
 
-                      {/* Actions */}
-                      <td className="py-3.5 px-4 text-right">
-                        <div className="flex items-center justify-end gap-1.5">
-                          {/* Test Play Button */}
-                          <button
-                            onClick={() => handleTestPlayVideo(video)}
-                            title="Test Play Stream"
-                            className="px-2.5 py-1 rounded-lg bg-red-600 hover:bg-red-700 text-white font-extrabold flex items-center gap-1 shadow-sm transition-all active:scale-95 text-[11px]"
-                          >
-                            <Play className="w-3.5 h-3.5 fill-white" />
-                            <span>Test Play</span>
-                          </button>
+                    {/* Views */}
+                    <td className="py-3.5 px-4 text-center font-mono font-bold text-xs text-blue-500">
+                      <span className="inline-flex items-center gap-1">
+                        <Eye className="w-3.5 h-3.5" />
+                        {getVideoViewCount(video).toLocaleString()}
+                      </span>
+                    </td>
 
-                          {/* Toggle Status Button */}
-                          <button
-                            onClick={() => onToggleVideoStatus(video.id, video.is_active)}
-                            title={video.is_active ? 'Deactivate Video' : 'Activate Video'}
-                            className={`p-1.5 rounded-lg transition-all ${
-                              video.is_active
-                                ? 'bg-emerald-950/40 text-emerald-400 border border-emerald-900/40 hover:bg-emerald-900/60'
-                                : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'
-                            }`}
-                          >
-                            {video.is_active ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5 text-emerald-500" />}
-                          </button>
+                    {/* Actions */}
+                    <td className="py-3.5 px-4 text-right">
+                      <div className="flex items-center justify-end gap-1.5">
+                        {/* Test Play Button */}
+                        <button
+                          onClick={() => handleTestPlayVideo(video)}
+                          title="Test Play Stream"
+                          className="px-2.5 py-1 rounded-lg bg-red-600 hover:bg-red-700 text-white font-extrabold flex items-center gap-1 shadow-sm transition-all active:scale-95 text-[11px]"
+                        >
+                          <Play className="w-3.5 h-3.5 fill-white" />
+                          <span>Test Play</span>
+                        </button>
 
-                          {/* Delete Button */}
-                          <button
-                            onClick={() => onDeleteVideo(video.id)}
-                            title="Delete Video"
-                            className="p-1.5 rounded-lg bg-red-950/40 text-red-500 hover:bg-red-900/60 border border-red-900/40 transition-all"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
+                        {/* Toggle Status Button */}
+                        <button
+                          onClick={() => onToggleVideoStatus(video.id, video.is_active)}
+                          title={video.is_active ? 'Deactivate Video' : 'Activate Video'}
+                          className={`p-1.5 rounded-lg transition-all ${
+                            video.is_active
+                              ? 'bg-emerald-950/40 text-emerald-400 border border-emerald-900/40 hover:bg-emerald-900/60'
+                              : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'
+                          }`}
+                        >
+                          {video.is_active ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5 text-emerald-500" />}
+                        </button>
+
+                        {/* Delete Button */}
+                        <button
+                          onClick={() => onDeleteVideo(video.id)}
+                          title="Delete Video"
+                          className="p-1.5 rounded-lg bg-red-950/40 text-red-500 hover:bg-red-900/60 border border-red-900/40 transition-all"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })
+            )}
             </tbody>
           </table>
         </div>
       </div>
 
-      {/* 4. MINIMAL TEST PLAY PREVIEW MODAL */}
+      {/* 4. TEST PLAY VIDEO PREVIEW MODAL */}
       {previewVideo && (
-        <div className="fixed inset-0 z-50 bg-black/75 backdrop-blur-sm flex items-center justify-center p-3 animate-in fade-in duration-150">
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
           <div
-            className={`w-full max-w-md rounded-2xl border shadow-2xl overflow-hidden ${
-              isDark ? 'bg-zinc-950 border-zinc-800 text-white' : 'bg-white border-zinc-200 text-zinc-900'
+            className={`w-full max-w-2xl rounded-2xl border shadow-2xl overflow-hidden ${
+              isDark ? 'bg-zinc-900 border-zinc-800 text-white' : 'bg-white border-zinc-200 text-zinc-900'
             }`}
           >
-            {/* Minimal Header */}
-            <div className="px-3.5 py-2.5 border-b border-zinc-800/80 flex items-center justify-between">
-              <div className="flex items-center gap-2 min-w-0">
-                <Play className="w-3.5 h-3.5 text-red-500 fill-red-500 flex-shrink-0" />
-                <span className="text-xs font-bold truncate font-mono">
-                  {previewVideo.id}
-                </span>
+            {/* Modal Header */}
+            <div className="p-4 border-b border-zinc-800/80 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <div className="p-2 rounded-xl bg-red-600 text-white">
+                  <Play className="w-4 h-4 fill-white" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-black">Video Stream Player Preview</h3>
+                  <p className="text-[11px] text-zinc-400 font-mono truncate max-w-md">
+                    ID: {previewVideo.id}
+                  </p>
+                </div>
               </div>
 
               <button
                 onClick={() => setPreviewVideo(null)}
-                className="p-1 rounded-lg hover:bg-zinc-800 text-zinc-400 hover:text-white transition-all flex-shrink-0"
+                className="p-1.5 rounded-xl hover:bg-zinc-800 text-zinc-400 hover:text-white transition-all"
               >
-                <X className="w-4 h-4" />
+                <X className="w-5 h-5" />
               </button>
             </div>
 
-            {/* Minimal Video Player */}
+            {/* Modal Player */}
             <div className="bg-black relative aspect-video flex items-center justify-center">
               <video
                 controls
@@ -1471,17 +1051,40 @@ export const VideosTab: React.FC<VideosTabProps> = ({
               </video>
             </div>
 
-            {/* Minimal Footer */}
-            <div className="p-3 flex items-center justify-between gap-2 border-t border-zinc-800/80 text-[11px]">
-              <span className="text-zinc-400 font-mono truncate max-w-[240px]">
-                {previewVideo.direct_url}
-              </span>
-              <button
-                onClick={() => setPreviewVideo(null)}
-                className="px-3 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-white font-bold transition-all flex-shrink-0"
-              >
-                Close
-              </button>
+            {/* Modal Footer Details */}
+            <div className="p-4 space-y-2 text-xs font-mono">
+              <div>
+                <span className="text-zinc-500 font-bold uppercase block text-[10px]">Direct Stream URL:</span>
+                <span className="text-red-400 break-all select-all font-semibold">{previewVideo.direct_url}</span>
+              </div>
+
+              {previewVideo.page_url && (
+                <div>
+                  <span className="text-zinc-500 font-bold uppercase block text-[10px]">Page URL:</span>
+                  <a
+                    href={previewVideo.page_url}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-blue-400 hover:underline break-all inline-flex items-center gap-1"
+                  >
+                    <span>{previewVideo.page_url}</span>
+                    <ExternalLink className="w-3 h-3" />
+                  </a>
+                </div>
+              )}
+
+              <div className="pt-2 flex items-center justify-between border-t border-zinc-800">
+                <span className="text-zinc-400">
+                  Status: <strong className={previewVideo.is_active ? 'text-emerald-400' : 'text-zinc-500'}>{previewVideo.is_active ? 'Active' : 'Inactive'}</strong>
+                </span>
+
+                <button
+                  onClick={() => setPreviewVideo(null)}
+                  className="px-4 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-white text-xs font-extrabold"
+                >
+                  Close Preview
+                </button>
+              </div>
             </div>
           </div>
         </div>
