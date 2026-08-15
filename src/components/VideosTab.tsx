@@ -1,13 +1,11 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState } from 'react';
 import {
   Video,
   Play,
   Pause,
   Plus,
   Trash2,
-  ExternalLink,
   Search,
-  Filter,
   Eye,
   CheckCircle2,
   AlertCircle,
@@ -16,18 +14,13 @@ import {
   Check,
   Film,
   Sparkles,
-  Link as LinkIcon,
   Activity,
   ShieldAlert,
   RefreshCw,
-  Zap,
-  AlertTriangle,
-  FileCheck,
 } from 'lucide-react';
 import { VideoDocument, TelemetryEventDocument, ThemeMode } from '../types';
 import { extractLinksFromString, verifyVideoLink } from '../lib/videoUtils';
 import { incrementVideoViews, logTelemetryEvent } from '../lib/firebase';
-import { extractVideoFromWebpage } from '../lib/videoScraper';
 
 interface VideosTabProps {
   videos: VideoDocument[];
@@ -50,7 +43,6 @@ export const VideosTab: React.FC<VideosTabProps> = ({
 
   // Add / Edit Video Form State
   const [directUrl, setDirectUrl] = useState<string>('');
-  const [pageUrl, setPageUrl] = useState<string>('');
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [verifyBeforeAdd, setVerifyBeforeAdd] = useState<boolean>(true);
   const [statusMessage, setStatusMessage] = useState<string>('');
@@ -67,7 +59,6 @@ export const VideosTab: React.FC<VideosTabProps> = ({
   // Video Health Checking State
   const [healthMap, setHealthMap] = useState<Record<string, 'healthy' | 'broken' | 'checking'>>({});
   const [isCheckingHealth, setIsCheckingHealth] = useState<boolean>(false);
-  const [autoPurgeEnabled, setAutoPurgeEnabled] = useState<boolean>(true);
 
   // Video Test Play Modal State
   const [previewVideo, setPreviewVideo] = useState<VideoDocument | null>(null);
@@ -77,7 +68,6 @@ export const VideosTab: React.FC<VideosTabProps> = ({
 
   // Universal link extraction (handles double quotes "vid2.mp4", single quotes, commas, brackets, etc.)
   const parsedDirectUrls = extractLinksFromString(directUrl);
-  const parsedPageUrls = extractLinksFromString(pageUrl);
 
   // View count calculation helper for each video (supports Firestore views field & telemetry event fallback)
   const getVideoViewCount = (video: VideoDocument): number => {
@@ -88,7 +78,6 @@ export const VideosTab: React.FC<VideosTabProps> = ({
             (e.event_type?.toLowerCase() === 'video_view' || e.event_type?.toLowerCase() === 'page_view') &&
             (e.video_id === video.id ||
               e.video_id === video.direct_url ||
-              e.video_id === video.page_url ||
               (e.details && e.details.includes(video.id)))
         ).length
       : 0;
@@ -124,8 +113,7 @@ export const VideosTab: React.FC<VideosTabProps> = ({
     const matchesSearch =
       searchQuery.trim() === '' ||
       video.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      video.direct_url.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (video.page_url && video.page_url.toLowerCase().includes(searchQuery.toLowerCase()));
+      video.direct_url.toLowerCase().includes(searchQuery.toLowerCase());
 
     // Filter by status
     const matchesStatus =
@@ -204,7 +192,7 @@ export const VideosTab: React.FC<VideosTabProps> = ({
   };
 
   // Copy Comma Separated Links
-  const handleCopyCommaSeparated = (type: 'direct' | 'page' | 'all-direct') => {
+  const handleCopyCommaSeparated = (type: 'direct' | 'all-direct') => {
     let targets: VideoDocument[] = [];
 
     if (type === 'all-direct') {
@@ -219,8 +207,8 @@ export const VideosTab: React.FC<VideosTabProps> = ({
     }
 
     const links = targets
-      .map((v) => (type === 'page' ? v.page_url || '' : v.direct_url))
-      .filter((l) => l.length > 0)
+      .map((v) => v.direct_url)
+      .filter((l) => l && l.length > 0)
       .join(', ');
 
     if (!links) {
@@ -232,7 +220,7 @@ export const VideosTab: React.FC<VideosTabProps> = ({
     setCopiedId(`batch-${type}`);
     setFeedback({
       type: 'success',
-      message: `Copied ${targets.length} comma-separated ${type === 'page' ? 'webpage' : 'direct stream'} links to clipboard!`,
+      message: `Copied ${targets.length} comma-separated direct stream link${targets.length > 1 ? 's' : ''} to clipboard!`,
     });
     setTimeout(() => setCopiedId(null), 3000);
   };
@@ -270,17 +258,16 @@ export const VideosTab: React.FC<VideosTabProps> = ({
     }
   };
 
-  // Handle Add Video Form Submit (Supports direct stream URLs and webpage video scraping/extraction)
+  // Handle Add Video Form Submit (Direct stream URLs)
   const handleAddVideo = async (e: React.FormEvent) => {
     e.preventDefault();
 
     const directList = parsedDirectUrls;
-    const pageList = parsedPageUrls;
 
-    if (directList.length === 0 && pageList.length === 0) {
+    if (directList.length === 0) {
       setFeedback({
         type: 'error',
-        message: 'Please enter at least one direct stream URL or webpage URL to process.',
+        message: 'Please enter at least one direct stream URL (.mp4, .m3u8, .webm, etc.) to add.',
       });
       return;
     }
@@ -294,10 +281,8 @@ export const VideosTab: React.FC<VideosTabProps> = ({
     const errorMessages: string[] = [];
 
     try {
-      // 1. Process Direct Stream URLs if entered in Field 1
       for (let i = 0; i < directList.length; i++) {
         const dUrl = directList[i];
-        const pUrl = pageList[i] || '';
 
         if (verifyBeforeAdd) {
           setStatusMessage(`Testing direct stream playability (${i + 1}/${directList.length}): ${dUrl}`);
@@ -313,8 +298,6 @@ export const VideosTab: React.FC<VideosTabProps> = ({
         setStatusMessage(`Saving video stream (${i + 1}/${directList.length})...`);
         await onSaveVideo({
           direct_url: dUrl,
-          source_webpage: pUrl,
-          page_url: pUrl,
           is_active: true,
           views: 0,
           created_at: new Date(),
@@ -322,66 +305,22 @@ export const VideosTab: React.FC<VideosTabProps> = ({
         addedCount++;
       }
 
-      // 2. Process Webpage URLs entered in Field 2 (Scrape & Extract Embedded Video Streams)
-      if (pageList.length > 0) {
-        // Filter out webpage links already paired 1-to-1 with direct URLs if directList was provided
-        const webpagesToScrape = directList.length === 0 ? pageList : pageList.slice(directList.length);
-
-        if (webpagesToScrape.length > 0) {
-          setStatusMessage(`Scraping webpage HTML & extracting video source (${webpagesToScrape.length} page${webpagesToScrape.length > 1 ? 's' : ''})...`);
-
-          const extractionResults = await extractVideoFromWebpage(webpagesToScrape);
-
-          for (const res of extractionResults) {
-            if (res.success && res.direct_url) {
-              if (verifyBeforeAdd) {
-                setStatusMessage(`Testing extracted stream playability: ${res.direct_url}`);
-                const health = await verifyVideoLink(res.direct_url, 5000);
-                if (health.status === 'broken') {
-                  skippedCount++;
-                  errorMessages.push(`Extracted stream from ${res.source_webpage} failed playability test.`);
-                  continue;
-                }
-              }
-
-              setStatusMessage(`Storing extracted video stream from ${res.source_webpage}...`);
-              await onSaveVideo({
-                direct_url: res.direct_url,
-                source_webpage: res.source_webpage,
-                page_url: res.source_webpage,
-                is_active: true,
-                views: 0,
-                created_at: new Date(),
-              });
-              addedCount++;
-            } else {
-              skippedCount++;
-              errorMessages.push(
-                res.error || `Could not extract video stream from webpage: ${res.source_webpage}`
-              );
-            }
-          }
-        }
-      }
-
-      // 3. UI Toast/Feedback Result
       if (addedCount > 0) {
         setFeedback({
           type: 'success',
           message:
             skippedCount > 0
-              ? `Successfully extracted & stored ${addedCount} video stream${addedCount > 1 ? 's' : ''}! (${skippedCount} link${skippedCount > 1 ? 's' : ''} failed extraction or playability)`
-              : `Successfully extracted video stream and stored ${addedCount} video document${addedCount > 1 ? 's' : ''} to Firestore!`,
+              ? `Successfully stored ${addedCount} video stream${addedCount > 1 ? 's' : ''}! (${skippedCount} link${skippedCount > 1 ? 's' : ''} failed playability check)`
+              : `Successfully added and verified ${addedCount} video stream${addedCount > 1 ? 's' : ''} to Firestore!`,
         });
         setDirectUrl('');
-        setPageUrl('');
       } else {
         setFeedback({
           type: 'error',
           message:
             errorMessages.length > 0
               ? errorMessages.join(' | ')
-              : 'Extraction failed: No valid video stream (.mp4, .m3u8) was found embedded on the webpage(s).',
+              : 'Failed to add video streams. Please check your links.',
         });
       }
     } catch (err: any) {
@@ -464,7 +403,7 @@ export const VideosTab: React.FC<VideosTabProps> = ({
             <h2 className="text-lg sm:text-xl font-black tracking-tight">Add New Video Stream</h2>
           </div>
           <p className={`text-xs mt-1 ${isDark ? 'text-zinc-400' : 'text-zinc-500'}`}>
-            Register direct video links (.mp4, .m3u8, webm) and optional referrer web links in Firestore.
+            Register direct video stream links (.mp4, .m3u8, .webm, CDN) in Firestore.
           </p>
         </div>
 
@@ -492,68 +431,34 @@ export const VideosTab: React.FC<VideosTabProps> = ({
         )}
 
         <form onSubmit={handleAddVideo} className="mt-5 space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {/* Field 1: Direct Stream Link (Single or Comma Separated) */}
-            <div>
-              <div className="flex items-center justify-between mb-1.5">
-                <label className={`block text-xs font-extrabold uppercase tracking-wider ${isDark ? 'text-zinc-400' : 'text-zinc-600'}`}>
-                  Direct Stream Link(s)
-                </label>
-                {parsedDirectUrls.length > 0 && (
-                  <span className="text-[11px] font-extrabold px-2 py-0.5 rounded-md bg-red-600/20 text-red-400 border border-red-600/30 flex items-center gap-1">
-                    <Sparkles className="w-3 h-3 text-red-400" />
-                    {parsedDirectUrls.length} stream link{parsedDirectUrls.length > 1 ? 's' : ''}
-                  </span>
-                )}
-              </div>
-              <div className="relative">
-                <textarea
-                  rows={3}
-                  value={directUrl}
-                  onChange={(e) => setDirectUrl(e.target.value)}
-                  placeholder="Paste single link or multiple comma-separated / newline-separated links&#10;e.g., https://cdn.com/1.mp4, https://cdn.com/2.m3u8"
-                  className={`w-full p-3 rounded-xl border text-xs font-mono font-medium focus:outline-none focus:border-red-600 ${
-                    isDark
-                      ? 'bg-zinc-950 text-white border-zinc-800 placeholder-zinc-600'
-                      : 'bg-zinc-50 text-zinc-900 border-zinc-300 placeholder-zinc-400'
-                  }`}
-                />
-              </div>
-              <p className={`text-[11px] mt-1 ${isDark ? 'text-zinc-500' : 'text-zinc-400'}`}>
-                Tip: You can paste multiple links separated by commas (<code>,</code>) or line breaks.
-              </p>
+          <div>
+            <div className="flex items-center justify-between mb-1.5">
+              <label className={`block text-xs font-extrabold uppercase tracking-wider ${isDark ? 'text-zinc-400' : 'text-zinc-600'}`}>
+                Direct Stream Link(s)
+              </label>
+              {parsedDirectUrls.length > 0 && (
+                <span className="text-[11px] font-extrabold px-2 py-0.5 rounded-md bg-red-600/20 text-red-400 border border-red-600/30 flex items-center gap-1">
+                  <Sparkles className="w-3 h-3 text-red-400" />
+                  {parsedDirectUrls.length} direct link{parsedDirectUrls.length > 1 ? 's' : ''} detected
+                </span>
+              )}
             </div>
-
-            {/* Field 2: Webpage Link(s) (Scrape & Extract Stream) */}
-            <div>
-              <div className="flex items-center justify-between mb-1.5">
-                <label className={`block text-xs font-extrabold uppercase tracking-wider ${isDark ? 'text-zinc-400' : 'text-zinc-600'}`}>
-                  Webpage Link(s) (Scrape & Extract Stream)
-                </label>
-                {parsedPageUrls.length > 0 && (
-                  <span className="text-[11px] font-extrabold px-2 py-0.5 rounded-md bg-blue-600/20 text-blue-400 border border-blue-600/30 flex items-center gap-1">
-                    <Zap className="w-3 h-3 text-blue-400 animate-pulse" />
-                    {parsedPageUrls.length} page link{parsedPageUrls.length > 1 ? 's' : ''} to scrape
-                  </span>
-                )}
-              </div>
-              <div className="relative">
-                <textarea
-                  rows={3}
-                  value={pageUrl}
-                  onChange={(e) => setPageUrl(e.target.value)}
-                  placeholder="Paste webpage URL(s) to scrape raw video source&#10;e.g., https://www.xxxfollow.com/adalyndiary/1396577-..."
-                  className={`w-full p-3 rounded-xl border text-xs font-mono font-medium focus:outline-none focus:border-red-600 ${
-                    isDark
-                      ? 'bg-zinc-950 text-white border-zinc-800 placeholder-zinc-600'
-                      : 'bg-zinc-50 text-zinc-900 border-zinc-300 placeholder-zinc-400'
-                  }`}
-                />
-              </div>
-              <p className={`text-[11px] mt-1 ${isDark ? 'text-zinc-500' : 'text-zinc-400'}`}>
-                Auto Scraper: Enter webpage URL(s). Our resolver extracts the raw embedded video stream (.mp4, .m3u8, CDN) and stores it to Firestore.
-              </p>
+            <div className="relative">
+              <textarea
+                rows={3}
+                value={directUrl}
+                onChange={(e) => setDirectUrl(e.target.value)}
+                placeholder="Paste direct stream URL(s)&#10;e.g., https://cdn.example.com/video1.mp4, https://stream.example.com/master.m3u8"
+                className={`w-full p-3.5 rounded-xl border text-xs font-mono font-medium focus:outline-none focus:border-red-600 ${
+                  isDark
+                    ? 'bg-zinc-950 text-white border-zinc-800 placeholder-zinc-600'
+                    : 'bg-zinc-50 text-zinc-900 border-zinc-300 placeholder-zinc-400'
+                }`}
+              />
             </div>
+            <p className={`text-[11px] mt-1 ${isDark ? 'text-zinc-500' : 'text-zinc-400'}`}>
+              Tip: You can paste a single URL or multiple stream links separated by commas (<code>,</code>) or line breaks.
+            </p>
           </div>
 
           <div className="flex items-center justify-between pt-2 flex-wrap gap-3">
@@ -571,17 +476,15 @@ export const VideosTab: React.FC<VideosTabProps> = ({
               </label>
 
               <span className={`text-xs font-medium ${isDark ? 'text-zinc-400' : 'text-zinc-500'}`}>
-                {Math.max(parsedDirectUrls.length, parsedPageUrls.length) > 0
-                  ? `(${Math.max(parsedDirectUrls.length, parsedPageUrls.length)} link entry${
-                      Math.max(parsedDirectUrls.length, parsedPageUrls.length) > 1 ? 's' : ''
-                    } ready)`
+                {parsedDirectUrls.length > 0
+                  ? `(${parsedDirectUrls.length} link entry${parsedDirectUrls.length > 1 ? 's' : ''} ready)`
                   : ''}
               </span>
             </div>
 
             <button
               type="submit"
-              disabled={isSubmitting || Math.max(parsedDirectUrls.length, parsedPageUrls.length) === 0}
+              disabled={isSubmitting || parsedDirectUrls.length === 0}
               className="px-6 py-3 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-extrabold flex items-center gap-2 shadow-lg shadow-red-600/30 transition-all active:scale-95 disabled:opacity-50"
             >
               {isSubmitting ? (
@@ -591,11 +494,9 @@ export const VideosTab: React.FC<VideosTabProps> = ({
               )}
               <span>
                 {isSubmitting
-                  ? parsedPageUrls.length > 0
-                    ? 'Scraping & Extracting Video Stream...'
-                    : 'Processing & Verifying Stream...'
-                  : Math.max(parsedDirectUrls.length, parsedPageUrls.length) > 1
-                  ? `Batch Process ${Math.max(parsedDirectUrls.length, parsedPageUrls.length)} Links`
+                  ? 'Verifying & Saving Stream...'
+                  : parsedDirectUrls.length > 1
+                  ? `Add ${parsedDirectUrls.length} Direct Streams`
                   : '+ Add Video'}
               </span>
             </button>
@@ -750,14 +651,6 @@ export const VideosTab: React.FC<VideosTabProps> = ({
               </button>
 
               <button
-                onClick={() => handleCopyCommaSeparated('page')}
-                className="px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-white font-extrabold flex items-center gap-1.5 transition-all"
-              >
-                <ExternalLink className="w-3.5 h-3.5 text-blue-400" />
-                <span>Copy Selected Webpage Links</span>
-              </button>
-
-              <button
                 onClick={handleBatchDelete}
                 disabled={isDeletingBatch}
                 className="px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-700 text-white font-extrabold flex items-center gap-1.5 shadow-md shadow-red-600/30 transition-all active:scale-95 disabled:opacity-50"
@@ -799,7 +692,6 @@ export const VideosTab: React.FC<VideosTabProps> = ({
                 </th>
                 <th className="py-3.5 px-4">Firestore Doc ID</th>
                 <th className="py-3.5 px-4">Direct Stream URL</th>
-                <th className="py-3.5 px-4">Webpage URL</th>
                 <th className="py-3.5 px-4 text-center">Status</th>
                 <th className="py-3.5 px-4 text-center">Stream Health</th>
                 <th className="py-3.5 px-4 text-center">Views</th>
@@ -812,7 +704,7 @@ export const VideosTab: React.FC<VideosTabProps> = ({
                   <td colSpan={7} className={`py-12 text-center ${isDark ? 'text-zinc-500' : 'text-zinc-400'}`}>
                     <Film className="w-8 h-8 mx-auto mb-2 text-zinc-600 opacity-60" />
                     <p className="font-bold text-sm">No videos found.</p>
-                    <p className="text-xs mt-1">Add a video using the form above or adjust your search filters.</p>
+                    <p className="text-xs mt-1">Add direct stream links using the form above or adjust your search filters.</p>
                   </td>
                 </tr>
               ) : (
@@ -844,162 +736,145 @@ export const VideosTab: React.FC<VideosTabProps> = ({
 
                       {/* Firestore Doc ID */}
                       <td className="py-3.5 px-4 font-mono font-bold text-red-500">
-                      <div className="flex items-center gap-1.5">
-                        <span className="truncate max-w-[100px]" title={video.id}>
-                          {video.id}
-                        </span>
-                        <button
-                          onClick={() => handleCopy(video.id, `id-${video.id}`)}
-                          className="p-1 rounded hover:bg-zinc-800 text-zinc-400 hover:text-white"
-                          title="Copy ID"
-                        >
-                          {copiedId === `id-${video.id}` ? (
-                            <Check className="w-3 h-3 text-emerald-500" />
-                          ) : (
-                            <Copy className="w-3 h-3" />
-                          )}
-                        </button>
-                      </div>
-                    </td>
-
-                    {/* Direct Stream URL */}
-                    <td className="py-3.5 px-4 max-w-xs truncate font-mono text-[11px]">
-                      <div className="flex items-center gap-1.5">
-                        <span className={`truncate ${isDark ? 'text-zinc-200' : 'text-zinc-800'}`} title={video.direct_url}>
-                          {video.direct_url}
-                        </span>
-                        <button
-                          onClick={() => handleCopy(video.direct_url, `url-${video.id}`)}
-                          className="p-1 rounded hover:bg-zinc-800 text-zinc-400 hover:text-white flex-shrink-0"
-                          title="Copy Direct URL"
-                        >
-                          {copiedId === `url-${video.id}` ? (
-                            <Check className="w-3 h-3 text-emerald-500" />
-                          ) : (
-                            <Copy className="w-3 h-3" />
-                          )}
-                        </button>
-                      </div>
-                    </td>
-
-                    {/* Webpage URL */}
-                    <td className="py-3.5 px-4 max-w-xs truncate font-mono text-[11px] text-zinc-400">
-                      {video.page_url ? (
-                        <a
-                          href={video.page_url}
-                          target="_blank"
-                          rel="noreferrer"
-                          className="hover:text-red-400 underline inline-flex items-center gap-1 truncate"
-                        >
-                          <span>{video.page_url}</span>
-                          <ExternalLink className="w-3 h-3 flex-shrink-0" />
-                        </a>
-                      ) : (
-                        <span className="text-zinc-500 italic">None</span>
-                      )}
-                    </td>
-
-                    {/* Status Toggle Badge */}
-                    <td className="py-3.5 px-4 text-center">
-                      <button
-                        onClick={() => onToggleVideoStatus(video.id, video.is_active)}
-                        className="transition-transform active:scale-95"
-                        title="Click to toggle status"
-                      >
-                        {video.is_active ? (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-emerald-600 text-white shadow-sm hover:bg-emerald-500">
-                            <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
-                            Active
+                        <div className="flex items-center gap-1.5">
+                          <span className="truncate max-w-[120px]" title={video.id}>
+                            {video.id}
                           </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-zinc-700 text-zinc-300 hover:bg-zinc-600">
-                            <span className="w-1.5 h-1.5 rounded-full bg-zinc-400" />
-                            Inactive
+                          <button
+                            onClick={() => handleCopy(video.id, `id-${video.id}`)}
+                            className="p-1 rounded hover:bg-zinc-800 text-zinc-400 hover:text-white"
+                            title="Copy ID"
+                          >
+                            {copiedId === `id-${video.id}` ? (
+                              <Check className="w-3 h-3 text-emerald-500" />
+                            ) : (
+                              <Copy className="w-3 h-3" />
+                            )}
+                          </button>
+                        </div>
+                      </td>
+
+                      {/* Direct Stream URL */}
+                      <td className="py-3.5 px-4 max-w-md truncate font-mono text-[11px]">
+                        <div className="flex items-center gap-1.5">
+                          <span className={`truncate ${isDark ? 'text-zinc-200' : 'text-zinc-800'}`} title={video.direct_url}>
+                            {video.direct_url}
                           </span>
-                        )}
-                      </button>
-                    </td>
+                          <button
+                            onClick={() => handleCopy(video.direct_url, `url-${video.id}`)}
+                            className="p-1 rounded hover:bg-zinc-800 text-zinc-400 hover:text-white flex-shrink-0"
+                            title="Copy Direct URL"
+                          >
+                            {copiedId === `url-${video.id}` ? (
+                              <Check className="w-3 h-3 text-emerald-500" />
+                            ) : (
+                              <Copy className="w-3 h-3" />
+                            )}
+                          </button>
+                        </div>
+                      </td>
 
-                    {/* Stream Health */}
-                    <td className="py-3.5 px-4 text-center">
-                      {healthMap[video.id] === 'checking' ? (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-400 border border-amber-500/30 text-[10px] font-extrabold animate-pulse">
-                          <RefreshCw className="w-3 h-3 animate-spin" />
-                          Testing...
-                        </span>
-                      ) : healthMap[video.id] === 'healthy' ? (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-[10px] font-extrabold">
-                          <CheckCircle2 className="w-3 h-3 text-emerald-400" />
-                          Healthy
-                        </span>
-                      ) : healthMap[video.id] === 'broken' ? (
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-red-600/20 text-red-400 border border-red-600/30 text-[10px] font-extrabold">
-                          <ShieldAlert className="w-3 h-3 text-red-400" />
-                          Broken Link
-                        </span>
-                      ) : (
-                        <button
-                          onClick={async () => {
-                            setHealthMap((prev) => ({ ...prev, [video.id]: 'checking' }));
-                            const res = await verifyVideoLink(video.direct_url, 4000);
-                            setHealthMap((prev) => ({ ...prev, [video.id]: res.status }));
-                          }}
-                          className="px-2 py-0.5 rounded-md bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-white text-[10px] font-extrabold border border-zinc-700 transition-all"
-                          title="Click to check link health"
-                        >
-                          Verify Link
-                        </button>
-                      )}
-                    </td>
-
-                    {/* Views */}
-                    <td className="py-3.5 px-4 text-center font-mono font-bold text-xs text-blue-500">
-                      <span className="inline-flex items-center gap-1">
-                        <Eye className="w-3.5 h-3.5" />
-                        {getVideoViewCount(video).toLocaleString()}
-                      </span>
-                    </td>
-
-                    {/* Actions */}
-                    <td className="py-3.5 px-4 text-right">
-                      <div className="flex items-center justify-end gap-1.5">
-                        {/* Test Play Button */}
-                        <button
-                          onClick={() => handleTestPlayVideo(video)}
-                          title="Test Play Stream"
-                          className="px-2.5 py-1 rounded-lg bg-red-600 hover:bg-red-700 text-white font-extrabold flex items-center gap-1 shadow-sm transition-all active:scale-95 text-[11px]"
-                        >
-                          <Play className="w-3.5 h-3.5 fill-white" />
-                          <span>Test Play</span>
-                        </button>
-
-                        {/* Toggle Status Button */}
+                      {/* Status Toggle Badge */}
+                      <td className="py-3.5 px-4 text-center">
                         <button
                           onClick={() => onToggleVideoStatus(video.id, video.is_active)}
-                          title={video.is_active ? 'Deactivate Video' : 'Activate Video'}
-                          className={`p-1.5 rounded-lg transition-all ${
-                            video.is_active
-                              ? 'bg-emerald-950/40 text-emerald-400 border border-emerald-900/40 hover:bg-emerald-900/60'
-                              : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'
-                          }`}
+                          className="transition-transform active:scale-95"
+                          title="Click to toggle status"
                         >
-                          {video.is_active ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5 text-emerald-500" />}
+                          {video.is_active ? (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-emerald-600 text-white shadow-sm hover:bg-emerald-500">
+                              <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
+                              Active
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-zinc-700 text-zinc-300 hover:bg-zinc-600">
+                              <span className="w-1.5 h-1.5 rounded-full bg-zinc-400" />
+                              Inactive
+                            </span>
+                          )}
                         </button>
+                      </td>
 
-                        {/* Delete Button */}
-                        <button
-                          onClick={() => onDeleteVideo(video.id)}
-                          title="Delete Video"
-                          className="p-1.5 rounded-lg bg-red-950/40 text-red-500 hover:bg-red-900/60 border border-red-900/40 transition-all"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                );
-              })
-            )}
+                      {/* Stream Health */}
+                      <td className="py-3.5 px-4 text-center">
+                        {healthMap[video.id] === 'checking' ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-400 border border-amber-500/30 text-[10px] font-extrabold animate-pulse">
+                            <RefreshCw className="w-3 h-3 animate-spin" />
+                            Testing...
+                          </span>
+                        ) : healthMap[video.id] === 'healthy' ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-[10px] font-extrabold">
+                            <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                            Healthy
+                          </span>
+                        ) : healthMap[video.id] === 'broken' ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-red-600/20 text-red-400 border border-red-600/30 text-[10px] font-extrabold">
+                            <ShieldAlert className="w-3 h-3 text-red-400" />
+                            Broken Link
+                          </span>
+                        ) : (
+                          <button
+                            onClick={async () => {
+                              setHealthMap((prev) => ({ ...prev, [video.id]: 'checking' }));
+                              const res = await verifyVideoLink(video.direct_url, 4000);
+                              setHealthMap((prev) => ({ ...prev, [video.id]: res.status }));
+                            }}
+                            className="px-2 py-0.5 rounded-md bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-white text-[10px] font-extrabold border border-zinc-700 transition-all"
+                            title="Click to check link health"
+                          >
+                            Verify Link
+                          </button>
+                        )}
+                      </td>
+
+                      {/* Views */}
+                      <td className="py-3.5 px-4 text-center font-mono font-bold text-xs text-blue-500">
+                        <span className="inline-flex items-center gap-1">
+                          <Eye className="w-3.5 h-3.5" />
+                          {getVideoViewCount(video).toLocaleString()}
+                        </span>
+                      </td>
+
+                      {/* Actions */}
+                      <td className="py-3.5 px-4 text-right">
+                        <div className="flex items-center justify-end gap-1.5">
+                          {/* Test Play Button */}
+                          <button
+                            onClick={() => handleTestPlayVideo(video)}
+                            title="Test Play Stream"
+                            className="px-2.5 py-1 rounded-lg bg-red-600 hover:bg-red-700 text-white font-extrabold flex items-center gap-1 shadow-sm transition-all active:scale-95 text-[11px]"
+                          >
+                            <Play className="w-3.5 h-3.5 fill-white" />
+                            <span>Test Play</span>
+                          </button>
+
+                          {/* Toggle Status Button */}
+                          <button
+                            onClick={() => onToggleVideoStatus(video.id, video.is_active)}
+                            title={video.is_active ? 'Deactivate Video' : 'Activate Video'}
+                            className={`p-1.5 rounded-lg transition-all ${
+                              video.is_active
+                                ? 'bg-emerald-950/40 text-emerald-400 border border-emerald-900/40 hover:bg-emerald-900/60'
+                                : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'
+                            }`}
+                          >
+                            {video.is_active ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5 text-emerald-500" />}
+                          </button>
+
+                          {/* Delete Button */}
+                          <button
+                            onClick={() => onDeleteVideo(video.id)}
+                            title="Delete Video"
+                            className="p-1.5 rounded-lg bg-red-950/40 text-red-500 hover:bg-red-900/60 border border-red-900/40 transition-all"
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
             </tbody>
           </table>
         </div>
@@ -1057,21 +932,6 @@ export const VideosTab: React.FC<VideosTabProps> = ({
                 <span className="text-zinc-500 font-bold uppercase block text-[10px]">Direct Stream URL:</span>
                 <span className="text-red-400 break-all select-all font-semibold">{previewVideo.direct_url}</span>
               </div>
-
-              {previewVideo.page_url && (
-                <div>
-                  <span className="text-zinc-500 font-bold uppercase block text-[10px]">Page URL:</span>
-                  <a
-                    href={previewVideo.page_url}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-blue-400 hover:underline break-all inline-flex items-center gap-1"
-                  >
-                    <span>{previewVideo.page_url}</span>
-                    <ExternalLink className="w-3 h-3" />
-                  </a>
-                </div>
-              )}
 
               <div className="pt-2 flex items-center justify-between border-t border-zinc-800">
                 <span className="text-zinc-400">
