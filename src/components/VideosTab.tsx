@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo } from 'react';
 import {
   Video,
   Play,
@@ -17,10 +17,21 @@ import {
   Activity,
   ShieldAlert,
   RefreshCw,
+  CopyX,
+  Layers,
+  ExternalLink,
+  AlertTriangle,
+  Radio,
 } from 'lucide-react';
 import { VideoDocument, TelemetryEventDocument, ThemeMode } from '../types';
 import { extractLinksFromString, verifyVideoLink } from '../lib/videoUtils';
 import { incrementVideoViews, logTelemetryEvent } from '../lib/firebase';
+
+interface DuplicateGroup {
+  url: string;
+  items: VideoDocument[];
+  keepId: string;
+}
 
 interface VideosTabProps {
   videos: VideoDocument[];
@@ -63,11 +74,36 @@ export const VideosTab: React.FC<VideosTabProps> = ({
   // Video Test Play Modal State
   const [previewVideo, setPreviewVideo] = useState<VideoDocument | null>(null);
 
+  // Duplicate Scanner State
+  const [duplicateGroups, setDuplicateGroups] = useState<DuplicateGroup[]>([]);
+  const [showDuplicateModal, setShowDuplicateModal] = useState<boolean>(false);
+  const [isDeletingDuplicates, setIsDeletingDuplicates] = useState<boolean>(false);
+
   // Clipboard Copied indicator state
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
   // Universal link extraction (handles double quotes "vid2.mp4", single quotes, commas, brackets, etc.)
   const parsedDirectUrls = extractLinksFromString(directUrl);
+
+  // Real-time calculation of duplicate links in the current video list
+  const liveDuplicatesSummary = useMemo(() => {
+    const urlMap = new Map<string, number>();
+    for (const v of videos) {
+      const u = (v.direct_url || '').trim();
+      if (u) {
+        urlMap.set(u, (urlMap.get(u) || 0) + 1);
+      }
+    }
+    let duplicateUrlCount = 0;
+    let redundantRecordsCount = 0;
+    urlMap.forEach((count) => {
+      if (count > 1) {
+        duplicateUrlCount++;
+        redundantRecordsCount += count - 1;
+      }
+    });
+    return { duplicateUrlCount, redundantRecordsCount };
+  }, [videos]);
 
   // View count calculation helper for each video (supports Firestore views field & telemetry event fallback)
   const getVideoViewCount = (video: VideoDocument): number => {
@@ -255,6 +291,103 @@ export const VideosTab: React.FC<VideosTabProps> = ({
       });
     } finally {
       setIsDeletingBatch(false);
+    }
+  };
+
+  // Scan and detect duplicate direct stream URLs across all video documents
+  const handleScanDuplicates = () => {
+    if (videos.length === 0) {
+      setFeedback({
+        type: 'error',
+        message: 'No videos found to scan for duplicates.',
+      });
+      return;
+    }
+
+    // Group videos by trimmed, normalized direct_url
+    const urlMap = new Map<string, VideoDocument[]>();
+    for (const v of videos) {
+      const normUrl = (v.direct_url || '').trim();
+      if (!normUrl) continue;
+      if (!urlMap.has(normUrl)) {
+        urlMap.set(normUrl, []);
+      }
+      urlMap.get(normUrl)!.push(v);
+    }
+
+    const dupes: DuplicateGroup[] = [];
+    urlMap.forEach((items, url) => {
+      if (items.length > 1) {
+        // Sort items: preserve the one with the highest views or earliest created_at as primary
+        const sorted = [...items].sort((a, b) => {
+          const viewsA = typeof a.views === 'number' ? a.views : 0;
+          const viewsB = typeof b.views === 'number' ? b.views : 0;
+          if (viewsB !== viewsA) return viewsB - viewsA;
+          const timeA = a.created_at?.toMillis ? a.created_at.toMillis() : new Date(a.created_at || 0).getTime();
+          const timeB = b.created_at?.toMillis ? b.created_at.toMillis() : new Date(b.created_at || 0).getTime();
+          return timeA - timeB;
+        });
+
+        dupes.push({
+          url,
+          items: sorted,
+          keepId: sorted[0].id, // Default keep candidate
+        });
+      }
+    });
+
+    if (dupes.length === 0) {
+      setFeedback({
+        type: 'success',
+        message: `Scan Complete: No duplicate links found! All ${videos.length} video streams are unique.`,
+      });
+      return;
+    }
+
+    setDuplicateGroups(dupes);
+    setShowDuplicateModal(true);
+  };
+
+  // Switch which document in a duplicate group should be preserved
+  const handleSetKeepId = (url: string, newKeepId: string) => {
+    setDuplicateGroups((prev) =>
+      prev.map((g) => (g.url === url ? { ...g, keepId: newKeepId } : g))
+    );
+  };
+
+  // Confirm and execute removal of all redundant duplicate records
+  const handleConfirmDeleteDuplicates = async () => {
+    const idsToDelete: string[] = [];
+    for (const group of duplicateGroups) {
+      for (const item of group.items) {
+        if (item.id !== group.keepId) {
+          idsToDelete.push(item.id);
+        }
+      }
+    }
+
+    if (idsToDelete.length === 0) {
+      setShowDuplicateModal(false);
+      return;
+    }
+
+    setIsDeletingDuplicates(true);
+    try {
+      await Promise.all(idsToDelete.map((id) => onDeleteVideo(id)));
+      setShowDuplicateModal(false);
+      setDuplicateGroups([]);
+      setFeedback({
+        type: 'success',
+        message: `Successfully removed ${idsToDelete.length} duplicate video link${idsToDelete.length > 1 ? 's' : ''}! Each link now appears exactly once.`,
+      });
+    } catch (err) {
+      console.error('Failed to delete duplicate links:', err);
+      setFeedback({
+        type: 'error',
+        message: 'Failed to remove some duplicate links. Please check connection and try again.',
+      });
+    } finally {
+      setIsDeletingDuplicates(false);
     }
   };
 
@@ -586,6 +719,29 @@ export const VideosTab: React.FC<VideosTabProps> = ({
                     ? 'Copied All Comma-Separated!'
                     : 'Copy All Direct Links (Comma Separated)'}
                 </span>
+              </button>
+            )}
+
+            {/* Quick Button: Scan & Remove Duplicate Links */}
+            {videos.length > 0 && (
+              <button
+                onClick={handleScanDuplicates}
+                className={`ml-2 px-3 py-1.5 rounded-xl text-xs font-extrabold flex items-center gap-1.5 border transition-all active:scale-95 shadow-sm ${
+                  liveDuplicatesSummary.duplicateUrlCount > 0
+                    ? 'bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border-amber-500/40 shadow-amber-500/10'
+                    : isDark
+                    ? 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border-zinc-700'
+                    : 'bg-zinc-100 hover:bg-zinc-200 text-zinc-800 border-zinc-300'
+                }`}
+                title="Scan for duplicate direct stream links, review occurrences, and confirm deletion so each link appears only once"
+              >
+                <CopyX className="w-3.5 h-3.5 text-amber-400" />
+                <span>Scan & Remove Duplicates</span>
+                {liveDuplicatesSummary.duplicateUrlCount > 0 && (
+                  <span className="px-1.5 py-0.5 rounded-full bg-amber-500 text-black text-[10px] font-black leading-none ml-0.5">
+                    {liveDuplicatesSummary.redundantRecordsCount}
+                  </span>
+                )}
               </button>
             )}
           </div>
@@ -943,6 +1099,277 @@ export const VideosTab: React.FC<VideosTabProps> = ({
                   className="px-4 py-2 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-white text-xs font-extrabold"
                 >
                   Close Preview
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 5. DUPLICATE LINKS REVIEW & CONFIRM DELETION MODAL */}
+      {showDuplicateModal && (
+        <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-3 sm:p-4 animate-in fade-in duration-200">
+          <div
+            className={`w-full max-w-3xl rounded-2xl border shadow-2xl overflow-hidden max-h-[90vh] flex flex-col ${
+              isDark ? 'bg-zinc-900 border-zinc-800 text-white' : 'bg-white border-zinc-200 text-zinc-900'
+            }`}
+          >
+            {/* Modal Header */}
+            <div
+              className={`p-4 sm:p-5 border-b flex items-center justify-between flex-shrink-0 ${
+                isDark ? 'bg-zinc-950 border-zinc-800' : 'bg-zinc-50 border-zinc-200'
+              }`}
+            >
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-xl bg-amber-500/10 text-amber-400 border border-amber-500/20">
+                  <CopyX className="w-5 h-5 text-amber-400" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black flex items-center gap-2">
+                    <span>Duplicate Stream Links Scanner</span>
+                    <span className="px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-400 border border-amber-500/30 text-[10px] font-black uppercase">
+                      {duplicateGroups.length} Unique URL{duplicateGroups.length > 1 ? 's' : ''} Duplicated
+                    </span>
+                  </h3>
+                  <p className="text-xs text-zinc-400 mt-0.5">
+                    Review identical video stream links. One copy will be retained, and redundant copies will be removed so each link appears only once.
+                  </p>
+                </div>
+              </div>
+
+              <button
+                onClick={() => {
+                  if (!isDeletingDuplicates) setShowDuplicateModal(false);
+                }}
+                disabled={isDeletingDuplicates}
+                className="p-2 rounded-xl hover:bg-zinc-800 text-zinc-400 hover:text-white transition-all disabled:opacity-40"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Sub-Header Stats Banner */}
+            <div
+              className={`px-4 sm:px-6 py-3 border-b flex items-center justify-between gap-4 text-xs font-semibold ${
+                isDark ? 'bg-zinc-950/60 border-zinc-800 text-zinc-300' : 'bg-zinc-100/80 border-zinc-200 text-zinc-700'
+              }`}
+            >
+              <div className="flex items-center gap-4 flex-wrap">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-zinc-500">Duplicate URL Groups:</span>
+                  <span className="font-extrabold text-amber-400">{duplicateGroups.length}</span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-zinc-500">Redundant Copies to Delete:</span>
+                  <span className="font-extrabold text-red-400">
+                    {duplicateGroups.reduce((acc, g) => acc + (g.items.length - 1), 0)}
+                  </span>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-zinc-500">Links Retained:</span>
+                  <span className="font-extrabold text-emerald-400">{duplicateGroups.length}</span>
+                </div>
+              </div>
+
+              <div className="text-[11px] text-zinc-500 hidden sm:block">
+                Select which document to keep for each URL
+              </div>
+            </div>
+
+            {/* Modal Body: List of Duplicate URL Groups */}
+            <div className="p-4 sm:p-6 overflow-y-auto flex-1 space-y-6">
+              {duplicateGroups.map((group, groupIdx) => {
+                const totalCopies = group.items.length;
+                const redundantInGroup = totalCopies - 1;
+
+                return (
+                  <div
+                    key={group.url + groupIdx}
+                    className={`rounded-2xl border overflow-hidden ${
+                      isDark ? 'bg-zinc-950/80 border-zinc-800' : 'bg-zinc-50 border-zinc-200'
+                    }`}
+                  >
+                    {/* Group Header */}
+                    <div
+                      className={`p-3.5 sm:p-4 border-b flex flex-col sm:flex-row sm:items-center justify-between gap-3 ${
+                        isDark ? 'bg-zinc-900/90 border-zinc-800' : 'bg-white border-zinc-200'
+                      }`}
+                    >
+                      <div className="flex items-start gap-2.5 min-w-0 flex-1">
+                        <span className="px-2 py-0.5 rounded-lg bg-amber-500/20 text-amber-400 border border-amber-500/30 text-[10px] font-black uppercase flex-shrink-0 mt-0.5">
+                          {totalCopies} Copies
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <p
+                            className="font-mono text-xs font-bold text-red-400 break-all select-all leading-relaxed"
+                            title={group.url}
+                          >
+                            {group.url}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2 flex-shrink-0 self-end sm:self-auto">
+                        <button
+                          onClick={() => handleCopy(group.url, `dupe-url-${groupIdx}`)}
+                          className="px-2.5 py-1 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-white text-[11px] font-bold flex items-center gap-1 transition-all"
+                          title="Copy direct stream link"
+                        >
+                          {copiedId === `dupe-url-${groupIdx}` ? (
+                            <Check className="w-3 h-3 text-emerald-400" />
+                          ) : (
+                            <Copy className="w-3 h-3 text-zinc-400" />
+                          )}
+                          <span>{copiedId === `dupe-url-${groupIdx}` ? 'Copied' : 'Copy'}</span>
+                        </button>
+
+                        <button
+                          onClick={() => setPreviewVideo(group.items[0])}
+                          className="px-2.5 py-1 rounded-lg bg-red-600/20 hover:bg-red-600/30 text-red-400 border border-red-500/30 text-[11px] font-bold flex items-center gap-1 transition-all"
+                          title="Test play stream preview"
+                        >
+                          <Play className="w-3 h-3 fill-red-400" />
+                          <span>Test Play</span>
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Group Documents Comparison List */}
+                    <div className="p-3 sm:p-4 space-y-2.5">
+                      <div className="text-[11px] font-bold text-zinc-400 uppercase tracking-wider px-1">
+                        Found {totalCopies} Firestore records with this identical stream URL:
+                      </div>
+
+                      <div className="grid grid-cols-1 gap-2">
+                        {group.items.map((item, itemIdx) => {
+                          const isKept = item.id === group.keepId;
+                          const views = getVideoViewCount(item);
+                          const createdTime = item.created_at
+                            ? item.created_at?.toDate
+                              ? item.created_at.toDate().toLocaleString()
+                              : new Date(item.created_at).toLocaleString()
+                            : 'Unknown';
+
+                          return (
+                            <div
+                              key={item.id}
+                              onClick={() => handleSetKeepId(group.url, item.id)}
+                              className={`p-3 rounded-xl border flex flex-col sm:flex-row sm:items-center justify-between gap-3 cursor-pointer transition-all ${
+                                isKept
+                                  ? isDark
+                                    ? 'bg-emerald-950/20 border-emerald-700/60 shadow-sm'
+                                    : 'bg-emerald-50/80 border-emerald-300 shadow-sm'
+                                  : isDark
+                                  ? 'bg-zinc-900/60 border-zinc-800/80 opacity-70 hover:opacity-100 hover:border-zinc-700'
+                                  : 'bg-white border-zinc-200 opacity-70 hover:opacity-100 hover:border-zinc-300'
+                              }`}
+                            >
+                              <div className="flex items-center gap-3 min-w-0">
+                                {/* Radio Circle */}
+                                <div
+                                  className={`w-4 h-4 rounded-full border flex items-center justify-center flex-shrink-0 ${
+                                    isKept
+                                      ? 'border-emerald-500 bg-emerald-500 text-white'
+                                      : isDark
+                                      ? 'border-zinc-700 bg-zinc-800'
+                                      : 'border-zinc-300 bg-zinc-100'
+                                  }`}
+                                >
+                                  {isKept && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
+                                </div>
+
+                                <div className="space-y-1 min-w-0">
+                                  <div className="flex items-center gap-2 flex-wrap">
+                                    <span className="font-mono text-xs font-extrabold text-zinc-300">
+                                      ID: <strong className="text-red-400">{item.id}</strong>
+                                    </span>
+                                    <span
+                                      className={`px-1.5 py-0.2 rounded text-[10px] font-bold ${
+                                        item.is_active
+                                          ? 'bg-emerald-950/40 text-emerald-400 border border-emerald-900/40'
+                                          : 'bg-zinc-800 text-zinc-400'
+                                      }`}
+                                    >
+                                      {item.is_active ? 'Active' : 'Inactive'}
+                                    </span>
+                                  </div>
+
+                                  <div className="flex items-center gap-3 text-[11px] text-zinc-400 flex-wrap">
+                                    <span>Added: {createdTime}</span>
+                                    <span>•</span>
+                                    <span className="text-zinc-300 font-semibold">{views} views</span>
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Status Badge */}
+                              <div className="flex items-center gap-2 flex-shrink-0 self-start sm:self-auto">
+                                {isKept ? (
+                                  <span className="px-2.5 py-1 rounded-lg bg-emerald-600/20 text-emerald-400 border border-emerald-500/40 text-xs font-black flex items-center gap-1.5">
+                                    <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                                    <span>Will Keep (Retained)</span>
+                                  </span>
+                                ) : (
+                                  <span className="px-2.5 py-1 rounded-lg bg-red-600/20 text-red-400 border border-red-500/40 text-xs font-black flex items-center gap-1.5">
+                                    <Trash2 className="w-3.5 h-3.5 text-red-400" />
+                                    <span>Will Delete</span>
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Modal Action Footer */}
+            <div
+              className={`p-4 sm:p-5 border-t flex flex-col sm:flex-row items-center justify-between gap-4 flex-shrink-0 ${
+                isDark ? 'bg-zinc-950 border-zinc-800' : 'bg-zinc-50 border-zinc-200'
+              }`}
+            >
+              <div className="text-xs text-zinc-400 text-center sm:text-left">
+                <span>
+                  Confirming will permanently remove{' '}
+                  <strong className="text-red-400 font-extrabold">
+                    {duplicateGroups.reduce((acc, g) => acc + (g.items.length - 1), 0)} redundant document(s)
+                  </strong>{' '}
+                  from Firestore, making each link appear exactly once.
+                </span>
+              </div>
+
+              <div className="flex items-center gap-3 w-full sm:w-auto justify-end">
+                <button
+                  onClick={() => setShowDuplicateModal(false)}
+                  disabled={isDeletingDuplicates}
+                  className="px-4 py-2 rounded-xl text-xs font-extrabold hover:bg-zinc-800 text-zinc-400 hover:text-white transition-all disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+
+                <button
+                  onClick={handleConfirmDeleteDuplicates}
+                  disabled={isDeletingDuplicates || duplicateGroups.length === 0}
+                  className="px-5 py-2.5 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-black flex items-center gap-2 shadow-lg shadow-red-600/30 transition-all active:scale-95 disabled:opacity-50"
+                >
+                  {isDeletingDuplicates ? (
+                    <>
+                      <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                      <span>Deleting Duplicates...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>
+                        Confirm Deletion & Remove (
+                        {duplicateGroups.reduce((acc, g) => acc + (g.items.length - 1), 0)}) Duplicates
+                      </span>
+                    </>
+                  )}
                 </button>
               </div>
             </div>
