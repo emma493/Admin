@@ -22,10 +22,17 @@ import {
   ExternalLink,
   AlertTriangle,
   Radio,
+  Code2,
+  Terminal,
+  Zap,
+  TrendingUp,
+  Globe,
+  ShieldCheck,
+  ArrowRight,
 } from 'lucide-react';
 import { VideoDocument, TelemetryEventDocument, ThemeMode } from '../types';
 import { extractLinksFromString, verifyVideoLink } from '../lib/videoUtils';
-import { incrementVideoViews, logTelemetryEvent } from '../lib/firebase';
+import { incrementVideoViews, logTelemetryEvent, fetchNextVideoAndTrackView } from '../lib/firebase';
 
 interface DuplicateGroup {
   url: string;
@@ -79,6 +86,11 @@ export const VideosTab: React.FC<VideosTabProps> = ({
   const [showDuplicateModal, setShowDuplicateModal] = useState<boolean>(false);
   const [isDeletingDuplicates, setIsDeletingDuplicates] = useState<boolean>(false);
 
+  // API Integration Guide Modal State
+  const [showApiModal, setShowApiModal] = useState<boolean>(false);
+  const [apiSnippetTab, setApiSnippetTab] = useState<'js' | 'react' | 'curl' | 'sdk'>('js');
+  const [isSimulatingFetch, setIsSimulatingFetch] = useState<boolean>(false);
+
   // Clipboard Copied indicator state
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
@@ -123,6 +135,7 @@ export const VideosTab: React.FC<VideosTabProps> = ({
   // Summary Metrics
   const totalVideos = videos.length;
   const activeVideos = videos.filter((v) => v.is_active).length;
+  const totalViews = videos.reduce((acc, v) => acc + getVideoViewCount(v), 0);
   const brokenCount = Object.values(healthMap).filter((status) => status === 'broken').length;
 
   // Handle Test Play video with instant view count increment
@@ -140,6 +153,61 @@ export const VideosTab: React.FC<VideosTabProps> = ({
       });
     } catch (err) {
       console.warn('Error recording test play video view:', err);
+    }
+  };
+
+  // Simulate Frontend Fetch & Watch (+1 View in Firestore)
+  const handleSimulateFrontendWatch = async () => {
+    if (videos.length === 0) {
+      setFeedback({
+        type: 'error',
+        message: 'No video stream links available in database to fetch.',
+      });
+      return;
+    }
+
+    setIsSimulatingFetch(true);
+    try {
+      // Call backend API endpoint to test the exact production workflow
+      const res = await fetch('/api/videos/next');
+      if (res.ok) {
+        const data = await res.json();
+        if (data.success && data.video) {
+          const matched = videos.find((v) => v.id === data.video.id) || {
+            id: data.video.id,
+            direct_url: data.video.direct_url,
+            views: data.video.views,
+            is_active: data.video.is_active,
+            created_at: new Date(),
+          };
+          setPreviewVideo(matched);
+          setFeedback({
+            type: 'success',
+            message: `Frontend Fetched Stream (ID: ${data.video.id}) • +1 View Recorded in Firestore! Total views: ${data.video.views}`,
+          });
+          return;
+        }
+      }
+
+      // Direct Firestore SDK fallback
+      const activeList = videos.filter((v) => v.is_active);
+      const chosen = activeList[Math.floor(Math.random() * activeList.length)] || videos[0];
+      await incrementVideoViews(chosen.id);
+      setPreviewVideo(chosen);
+      setFeedback({
+        type: 'success',
+        message: `Frontend Fetched Stream (ID: ${chosen.id}) • +1 View Recorded in Firestore!`,
+      });
+    } catch (err: any) {
+      console.error('Simulation error:', err);
+      const activeList = videos.filter((v) => v.is_active);
+      if (activeList.length > 0) {
+        const chosen = activeList[Math.floor(Math.random() * activeList.length)];
+        await incrementVideoViews(chosen.id);
+        setPreviewVideo(chosen);
+      }
+    } finally {
+      setIsSimulatingFetch(false);
     }
   };
 
@@ -478,7 +546,7 @@ export const VideosTab: React.FC<VideosTabProps> = ({
   return (
     <div className="space-y-8">
       {/* 1. HEADER / SUMMARY BAR */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         {/* Metric 1: Total Videos */}
         <div
           className={`p-5 rounded-2xl border transition-all ${
@@ -499,7 +567,7 @@ export const VideosTab: React.FC<VideosTabProps> = ({
           </div>
         </div>
 
-        {/* Metric 2: Active Videos */}
+        {/* Metric 2: Active Streams */}
         <div
           className={`p-5 rounded-2xl border transition-all ${
             isDark ? 'bg-zinc-900/90 border-zinc-800 text-white' : 'bg-white border-zinc-200 text-zinc-900'
@@ -517,6 +585,35 @@ export const VideosTab: React.FC<VideosTabProps> = ({
             <span className="text-3xl font-black tracking-tight font-mono text-emerald-500">{activeVideos}</span>
             <span className={`text-xs font-extrabold px-2 py-0.5 rounded-full border ${isDark ? 'bg-emerald-950/80 text-emerald-400 border-emerald-900' : 'bg-emerald-50 text-emerald-700 border-emerald-200'}`}>
               {totalVideos > 0 ? `${Math.round((activeVideos / totalVideos) * 100)}% active` : '0%'}
+            </span>
+          </div>
+        </div>
+
+        {/* Metric 3: Total Views (Beside Active Streams) */}
+        <div
+          className={`p-5 rounded-2xl border transition-all relative overflow-hidden ${
+            isDark ? 'bg-zinc-900/90 border-zinc-800 text-white' : 'bg-white border-zinc-200 text-zinc-900'
+          }`}
+        >
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-1.5">
+              <span className={`text-xs font-bold uppercase tracking-wider ${isDark ? 'text-zinc-400' : 'text-zinc-500'}`}>
+                Total Views
+              </span>
+              <span className="px-1.5 py-0.5 rounded-md bg-blue-500/10 text-blue-400 text-[10px] font-black uppercase border border-blue-500/20">
+                Live
+              </span>
+            </div>
+            <div className="p-2.5 rounded-xl bg-blue-600/10 text-blue-500 border border-blue-600/20">
+              <Eye className="w-5 h-5 text-blue-500" />
+            </div>
+          </div>
+          <div className="mt-3 flex items-baseline gap-2">
+            <span className="text-3xl font-black tracking-tight font-mono text-blue-500">
+              {totalViews.toLocaleString()}
+            </span>
+            <span className={`text-xs font-extrabold px-2 py-0.5 rounded-full border ${isDark ? 'bg-blue-950/80 text-blue-400 border-blue-900' : 'bg-blue-50 text-blue-700 border-blue-200'}`}>
+              {activeVideos > 0 ? `${(totalViews / Math.max(activeVideos, 1)).toFixed(1)} avg/stream` : '0 views'}
             </span>
           </div>
         </div>
@@ -742,6 +839,29 @@ export const VideosTab: React.FC<VideosTabProps> = ({
                     {liveDuplicatesSummary.redundantRecordsCount}
                   </span>
                 )}
+              </button>
+            )}
+
+            {/* Quick Button: Frontend API & Embed Guide */}
+            <button
+              onClick={() => setShowApiModal(true)}
+              className="ml-2 px-3 py-1.5 rounded-xl bg-blue-600/20 hover:bg-blue-600/30 text-blue-300 text-xs font-extrabold flex items-center gap-1.5 border border-blue-500/30 transition-all active:scale-95 shadow-sm"
+              title="View REST API endpoints and code snippets for frontend video players to fetch streams and record 1 view per watch"
+            >
+              <Code2 className="w-3.5 h-3.5 text-blue-400" />
+              <span>Frontend API & Views Guide</span>
+            </button>
+
+            {/* Quick Button: Simulate Frontend Video Fetch (+1 View) */}
+            {videos.length > 0 && (
+              <button
+                onClick={handleSimulateFrontendWatch}
+                disabled={isSimulatingFetch}
+                className="ml-2 px-3 py-1.5 rounded-xl bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 text-xs font-extrabold flex items-center gap-1.5 border border-emerald-500/30 transition-all active:scale-95 shadow-sm disabled:opacity-50"
+                title="Simulate a frontend user fetching a stream link to verify +1 view increment in Firestore"
+              >
+                <Play className={`w-3.5 h-3.5 text-emerald-400 fill-emerald-400 ${isSimulatingFetch ? 'animate-spin' : ''}`} />
+                <span>{isSimulatingFetch ? 'Fetching...' : 'Simulate Video Fetch (+1 View)'}</span>
               </button>
             )}
           </div>
@@ -1372,6 +1492,306 @@ export const VideosTab: React.FC<VideosTabProps> = ({
                   )}
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 5. FRONTEND VIDEO API & WATCH VIEWS INTEGRATION MODAL */}
+      {showApiModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-in fade-in duration-200">
+          <div
+            className={`w-full max-w-4xl max-h-[90vh] rounded-3xl border shadow-2xl flex flex-col overflow-hidden ${
+              isDark ? 'bg-zinc-950 border-zinc-800 text-white' : 'bg-white border-zinc-200 text-zinc-900'
+            }`}
+          >
+            {/* Modal Header */}
+            <div className="p-5 sm:p-6 border-b border-zinc-800/80 flex items-center justify-between gap-4 flex-shrink-0 bg-gradient-to-r from-blue-950/40 to-transparent">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 rounded-2xl bg-blue-600/20 text-blue-400 border border-blue-500/30 shadow-lg shadow-blue-600/10">
+                  <Code2 className="w-6 h-6 text-blue-400" />
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-lg sm:text-xl font-black">Frontend Video API & Real-time View Tracking</h3>
+                    <span className="px-2 py-0.5 rounded-full bg-blue-500/20 text-blue-300 text-[10px] font-black border border-blue-500/30 uppercase">
+                      +1 View / Fetch
+                    </span>
+                  </div>
+                  <p className={`text-xs mt-0.5 ${isDark ? 'text-zinc-400' : 'text-zinc-500'}`}>
+                    How your frontend video player fetches direct stream links and automatically records 1 view per watch.
+                  </p>
+                </div>
+              </div>
+
+              <button
+                onClick={() => setShowApiModal(false)}
+                className={`p-2 rounded-xl border transition-all ${
+                  isDark ? 'border-zinc-800 hover:bg-zinc-800 text-zinc-400 hover:text-white' : 'border-zinc-200 hover:bg-zinc-100 text-zinc-600'
+                }`}
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="p-5 sm:p-6 overflow-y-auto space-y-6 flex-1">
+              {/* How it Works Banner */}
+              <div className="p-4 rounded-2xl border bg-blue-950/20 border-blue-800/50 flex items-start gap-3">
+                <Zap className="w-5 h-5 text-blue-400 flex-shrink-0 mt-0.5" />
+                <div className="text-xs space-y-1 text-zinc-300">
+                  <strong className="text-white font-extrabold block text-sm">
+                    How Stream Fetching & View Recording Works:
+                  </strong>
+                  <p>
+                    Whenever your frontend app/player calls <code className="text-blue-400 font-mono font-bold">GET /api/videos/next</code> or <code className="text-blue-400 font-mono font-bold">GET /api/videos/random</code>, the system fetches an active stream link (.mp4/.m3u8) from Firestore and <strong className="text-emerald-400">automatically increments the video's views field by +1</strong>.
+                  </p>
+                  <p className="text-zinc-400 text-[11px]">
+                    If a user watches 100 videos or 100 links are fetched, all 100 views are tallied in the Total Views counter beside Active Streams in real-time.
+                  </p>
+                </div>
+              </div>
+
+              {/* Endpoint Overview Cards */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <div className={`p-3.5 rounded-xl border ${isDark ? 'bg-zinc-900/60 border-zinc-800' : 'bg-zinc-50 border-zinc-200'}`}>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="px-2 py-0.5 rounded-md bg-emerald-600/20 text-emerald-400 font-mono text-[11px] font-black border border-emerald-500/30">
+                      GET /api/videos/next
+                    </span>
+                    <span className="text-[10px] font-bold text-emerald-400 flex items-center gap-1">
+                      <CheckCircle2 className="w-3 h-3" /> Auto +1 View
+                    </span>
+                  </div>
+                  <p className="text-xs text-zinc-400 mt-2">
+                    Fetches 1 active video stream URL for player playback and immediately records 1 view in Firestore.
+                  </p>
+                </div>
+
+                <div className={`p-3.5 rounded-xl border ${isDark ? 'bg-zinc-900/60 border-zinc-800' : 'bg-zinc-50 border-zinc-200'}`}>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="px-2 py-0.5 rounded-md bg-purple-600/20 text-purple-400 font-mono text-[11px] font-black border border-purple-500/30">
+                      GET /api/videos?limit=100
+                    </span>
+                    <span className="text-[10px] font-bold text-zinc-400">
+                      Bulk List
+                    </span>
+                  </div>
+                  <p className="text-xs text-zinc-400 mt-2">
+                    Returns array of all active direct stream links. Optional <code className="font-mono text-zinc-300">?track_view=true</code> to track view on fetch.
+                  </p>
+                </div>
+              </div>
+
+              {/* Interactive Code Snippets Tabs */}
+              <div>
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-black uppercase tracking-wider text-zinc-400">
+                    Frontend Code Integration Examples
+                  </span>
+                  <div className="flex items-center gap-1 p-1 rounded-xl bg-zinc-900 border border-zinc-800 text-xs">
+                    <button
+                      onClick={() => setApiSnippetTab('js')}
+                      className={`px-2.5 py-1 rounded-lg font-bold transition-all ${
+                        apiSnippetTab === 'js' ? 'bg-blue-600 text-white' : 'text-zinc-400 hover:text-white'
+                      }`}
+                    >
+                      JavaScript / HTML5
+                    </button>
+                    <button
+                      onClick={() => setApiSnippetTab('react')}
+                      className={`px-2.5 py-1 rounded-lg font-bold transition-all ${
+                        apiSnippetTab === 'react' ? 'bg-blue-600 text-white' : 'text-zinc-400 hover:text-white'
+                      }`}
+                    >
+                      React Component
+                    </button>
+                    <button
+                      onClick={() => setApiSnippetTab('curl')}
+                      className={`px-2.5 py-1 rounded-lg font-bold transition-all ${
+                        apiSnippetTab === 'curl' ? 'bg-blue-600 text-white' : 'text-zinc-400 hover:text-white'
+                      }`}
+                    >
+                      cURL
+                    </button>
+                    <button
+                      onClick={() => setApiSnippetTab('sdk')}
+                      className={`px-2.5 py-1 rounded-lg font-bold transition-all ${
+                        apiSnippetTab === 'sdk' ? 'bg-blue-600 text-white' : 'text-zinc-400 hover:text-white'
+                      }`}
+                    >
+                      Firestore Web SDK
+                    </button>
+                  </div>
+                </div>
+
+                {/* Code Box */}
+                <div className="relative rounded-2xl border bg-zinc-950 border-zinc-800 p-4 font-mono text-xs text-zinc-300 overflow-x-auto shadow-inner">
+                  {apiSnippetTab === 'js' && (
+                    <pre className="leading-relaxed">
+{`// 1. Fetch the next stream link from ShortXX API
+// Calling this endpoint AUTOMATICALLY records +1 view on the video in Firestore!
+async function loadAndPlayNextVideo() {
+  try {
+    const response = await fetch('/api/videos/next');
+    const data = await response.json();
+
+    if (data.success && data.video) {
+      const videoElement = document.getElementById('myVideoPlayer');
+      videoElement.src = data.video.direct_url;
+      videoElement.play();
+
+      console.log('Now Playing:', data.video.id, 'Total Views:', data.video.views);
+    }
+  } catch (error) {
+    console.error('Failed to fetch video stream:', error);
+  }
+}
+
+// 2. Play next video when current one finishes
+document.getElementById('myVideoPlayer').addEventListener('ended', loadAndPlayNextVideo);`}
+                    </pre>
+                  )}
+
+                  {apiSnippetTab === 'react' && (
+                    <pre className="leading-relaxed">
+{`import React, { useState, useEffect } from 'react';
+
+export function VideoPlayerFeed() {
+  const [stream, setStream] = useState(null);
+  const [loading, setLoading] = useState(false);
+
+  const fetchNextVideo = async () => {
+    setLoading(true);
+    try {
+      // Calling /api/videos/next fetches direct stream & records +1 view
+      const res = await fetch('/api/videos/next');
+      const data = await res.json();
+      if (data.success) {
+        setStream(data.video);
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchNextVideo();
+  }, []);
+
+  if (!stream) return <div>Loading video stream...</div>;
+
+  return (
+    <div className="video-card">
+      <video
+        key={stream.id}
+        src={stream.direct_url}
+        controls
+        autoPlay
+        playsInline
+        onEnded={fetchNextVideo}
+        className="w-full rounded-2xl shadow-xl"
+      />
+      <div className="mt-2 text-sm font-bold text-zinc-400">
+        Total Views: {stream.views}
+      </div>
+    </div>
+  );
+}`}
+                    </pre>
+                  )}
+
+                  {apiSnippetTab === 'curl' && (
+                    <pre className="leading-relaxed">
+{`# Fetch next stream and automatically record 1 view in Firestore:
+curl -X GET "http://localhost:3000/api/videos/next"
+
+# Response format:
+# {
+#   "success": true,
+#   "video": {
+#     "id": "vid_12345",
+#     "direct_url": "https://cdn.example.com/stream.mp4",
+#     "views": 42,
+#     "is_active": true
+#   },
+#   "tracked_view": true,
+#   "message": "Video stream link fetched and 1 view successfully recorded in Firestore."
+# }`}
+                    </pre>
+                  )}
+
+                  {apiSnippetTab === 'sdk' && (
+                    <pre className="leading-relaxed">
+{`// If your frontend connects directly to Firebase Firestore:
+import { doc, updateDoc, increment } from 'firebase/firestore';
+import { db } from './firebase';
+
+// When a video is fetched or rendered for the user:
+export async function trackVideoView(videoId) {
+  const videoRef = doc(db, 'videos', videoId);
+  await updateDoc(videoRef, {
+    views: increment(1)
+  });
+}`}
+                    </pre>
+                  )}
+
+                  <button
+                    onClick={() => {
+                      let text = '';
+                      if (apiSnippetTab === 'js') {
+                        text = `async function loadAndPlayNextVideo() {\n  const response = await fetch('/api/videos/next');\n  const data = await response.json();\n  if (data.success && data.video) {\n    const videoElement = document.getElementById('myVideoPlayer');\n    videoElement.src = data.video.direct_url;\n    videoElement.play();\n  }\n}`;
+                      } else if (apiSnippetTab === 'react') {
+                        text = `const fetchNextVideo = async () => {\n  const res = await fetch('/api/videos/next');\n  const data = await res.json();\n  if (data.success) setStream(data.video);\n};`;
+                      } else if (apiSnippetTab === 'curl') {
+                        text = `curl -X GET "http://localhost:3000/api/videos/next"`;
+                      } else {
+                        text = `await updateDoc(doc(db, 'videos', videoId), { views: increment(1) });`;
+                      }
+                      handleCopy(text, 'api-code');
+                    }}
+                    className="absolute top-3 right-3 px-3 py-1.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-bold flex items-center gap-1.5 border border-zinc-700 transition-all active:scale-95 shadow-md"
+                  >
+                    {copiedId === 'api-code' ? (
+                      <Check className="w-3.5 h-3.5 text-emerald-400" />
+                    ) : (
+                      <Copy className="w-3.5 h-3.5 text-blue-400" />
+                    )}
+                    <span>{copiedId === 'api-code' ? 'Copied Snippet' : 'Copy Code'}</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Live Test Action */}
+              <div className="p-4 rounded-2xl border bg-zinc-900/50 border-zinc-800 flex flex-col sm:flex-row items-center justify-between gap-3">
+                <div>
+                  <h4 className="text-xs font-black text-white">Want to test the view recording in real-time?</h4>
+                  <p className="text-[11px] text-zinc-400">
+                    Click the button to simulate the frontend calling the API, watch the video stream, and verify the +1 view tally.
+                  </p>
+                </div>
+                <button
+                  onClick={() => {
+                    setShowApiModal(false);
+                    handleSimulateFrontendWatch();
+                  }}
+                  className="px-4 py-2 rounded-xl bg-blue-600 hover:bg-blue-500 text-white text-xs font-black flex items-center gap-2 shadow-lg shadow-blue-600/30 transition-all active:scale-95 flex-shrink-0"
+                >
+                  <Play className="w-3.5 h-3.5 fill-white" />
+                  <span>Simulate Fetch Now (+1 View)</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className={`p-4 sm:p-5 border-t flex justify-end ${isDark ? 'bg-zinc-950 border-zinc-800' : 'bg-zinc-50 border-zinc-200'}`}>
+              <button
+                onClick={() => setShowApiModal(false)}
+                className="px-5 py-2.5 rounded-xl bg-zinc-800 hover:bg-zinc-700 text-white text-xs font-bold transition-all"
+              >
+                Close Guide
+              </button>
             </div>
           </div>
         </div>

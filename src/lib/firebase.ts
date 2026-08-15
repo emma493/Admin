@@ -444,6 +444,40 @@ export async function incrementVideoViews(videoIdOrUrl: string): Promise<void> {
     console.warn('Error incrementing video views:', videoIdOrUrl, err);
   }
 }
+
+/**
+ * Fetches an active video stream directly and increments its view by 1
+ */
+export async function fetchNextVideoAndTrackView(excludeIds: string[] = []): Promise<VideoDocument | null> {
+  try {
+    const videosRef = collection(db, VIDEOS_COLLECTION);
+    const q = query(videosRef, where('is_active', '==', true));
+    const snap = await getDocs(q);
+    if (snap.empty) return null;
+
+    let eligible = snap.docs.filter((d) => !excludeIds.includes(d.id));
+    if (eligible.length === 0) eligible = snap.docs;
+
+    const chosenDoc = eligible[Math.floor(Math.random() * eligible.length)];
+    const chosenId = chosenDoc.id;
+    const docData = chosenDoc.data();
+
+    // Increment view atomically in Firestore
+    await updateDoc(doc(db, VIDEOS_COLLECTION, chosenId), { views: increment(1) });
+
+    return {
+      id: chosenId,
+      direct_url: docData.direct_url || '',
+      views: (typeof docData.views === 'number' ? docData.views : 0) + 1,
+      is_active: docData.is_active ?? true,
+      created_at: docData.created_at || new Date(),
+    };
+  } catch (err) {
+    console.error('Error in fetchNextVideoAndTrackView:', err);
+    return null;
+  }
+}
+
 export function subscribeToAdminAnalytics(
   onData: (data: AdminAnalyticsDocument) => void,
   onError?: (err: Error) => void
