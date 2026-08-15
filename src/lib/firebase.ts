@@ -331,13 +331,23 @@ export function subscribeToVideos(
     (snapshot) => {
       const items: VideoDocument[] = snapshot.docs.map((docSnap) => {
         const data = docSnap.data();
+        const streamUrl = data.url || data.direct_url || '';
+        const sourceWeb = data.sourcePage || data.source_webpage || data.page_url || '';
+        const isActive = typeof data.is_active === 'boolean' ? data.is_active : (data.status !== 'Inactive');
+        const linkType = data.type || (sourceWeb && sourceWeb !== streamUrl ? 'scraped' : 'direct');
+
         return {
           id: docSnap.id,
-          page_url: data.page_url || data.source_webpage || '',
-          source_webpage: data.source_webpage || data.page_url || '',
-          direct_url: data.direct_url || '',
-          is_active: typeof data.is_active === 'boolean' ? data.is_active : true,
-          created_at: data.created_at || new Date(),
+          url: streamUrl,
+          direct_url: streamUrl,
+          sourcePage: sourceWeb,
+          source_webpage: sourceWeb,
+          page_url: sourceWeb,
+          status: isActive ? 'Active' : 'Inactive',
+          is_active: isActive,
+          type: linkType,
+          addedAt: data.addedAt || data.created_at || new Date(),
+          created_at: data.created_at || data.addedAt || new Date(),
           views: typeof data.views === 'number' ? data.views : 0,
         };
       });
@@ -360,14 +370,22 @@ export async function saveVideoDoc(videoData: Omit<VideoDocument, 'id'> & { id?:
       ? doc(db, VIDEOS_COLLECTION, videoData.id!)
       : doc(collection(db, VIDEOS_COLLECTION));
 
-    const sourceWebpage = videoData.source_webpage || videoData.page_url || '';
+    const sourceWebpage = videoData.sourcePage || videoData.source_webpage || videoData.page_url || '';
+    const directUrl = videoData.url || videoData.direct_url || '';
+    const isActive = typeof videoData.is_active === 'boolean' ? videoData.is_active : videoData.status !== 'Inactive';
+    const linkType = videoData.type || (sourceWebpage && sourceWebpage !== directUrl ? 'scraped' : 'direct');
 
     const payload: Record<string, any> = {
-      direct_url: videoData.direct_url || '',
+      url: directUrl,
+      direct_url: directUrl,
+      sourcePage: sourceWebpage,
       source_webpage: sourceWebpage,
       page_url: sourceWebpage,
-      is_active: typeof videoData.is_active === 'boolean' ? videoData.is_active : true,
+      is_active: isActive,
+      status: isActive ? 'Active' : 'Inactive',
+      type: linkType,
       views: typeof videoData.views === 'number' ? videoData.views : 0,
+      addedAt: videoData.addedAt ? videoData.addedAt : serverTimestamp(),
       created_at: videoData.created_at ? videoData.created_at : serverTimestamp(),
     };
 

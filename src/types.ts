@@ -25,10 +25,15 @@ export type NotificationStatus = 'active' | 'paused';
 
 export interface VideoDocument {
   id: string;
-  page_url?: string;
-  source_webpage?: string;
-  direct_url: string;
+  url?: string; // Direct video stream URL (.mp4/.m3u8)
+  direct_url: string; // Standard direct video stream URL
+  sourcePage?: string; // Original webpage URL
+  source_webpage?: string; // Original webpage URL alias
+  page_url?: string; // Original webpage URL alias
+  status?: 'Active' | 'Inactive' | string; // "Active" | "Inactive"
   is_active: boolean;
+  type?: 'direct' | 'scraped'; // "direct" or "scraped"
+  addedAt?: Timestamp | Date | number | any; // serverTimestamp()
   created_at: Timestamp | Date | number | any;
   views: number;
 }

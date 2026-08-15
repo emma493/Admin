@@ -20,11 +20,23 @@ import {
   Zap,
   Globe,
   Layers,
+  ShieldCheck,
+  Radio,
 } from 'lucide-react';
 import { VideoDocument, TelemetryEventDocument, ThemeMode } from '../types';
 import { extractLinksFromString, verifyVideoLink } from '../lib/videoUtils';
 import { incrementVideoViews, logTelemetryEvent } from '../lib/firebase';
-import { extractVideoFromWebpage } from '../lib/videoScraper';
+import { extractVideoFromWebpage, ExtractVideoResult } from '../lib/videoScraper';
+
+export interface BatchReportItem {
+  id: string;
+  sourceUrl: string;
+  directUrl?: string;
+  status: 'saved' | 'skipped' | 'failed' | 'processing';
+  message?: string;
+  proxyName?: string;
+  type: 'direct' | 'scraped';
+}
 
 interface VideosTabProps {
   videos: VideoDocument[];
@@ -52,6 +64,18 @@ export const VideosTab: React.FC<VideosTabProps> = ({
   const [verifyBeforeAdd, setVerifyBeforeAdd] = useState<boolean>(true);
   const [statusMessage, setStatusMessage] = useState<string>('');
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
+  // Batch Progress & Report State for rich step-by-step badges
+  const [batchProgress, setBatchProgress] = useState<{
+    current: number;
+    total: number;
+    stage: 'checking' | 'proxying' | 'parsing' | 'validating' | 'saving' | 'success' | 'failed';
+    message: string;
+    url: string;
+    proxyName?: string;
+  } | null>(null);
+
+  const [batchReport, setBatchReport] = useState<BatchReportItem[]>([]);
 
   // Search & Filter State
   const [searchQuery, setSearchQuery] = useState<string>('');
@@ -313,38 +337,86 @@ export const VideosTab: React.FC<VideosTabProps> = ({
     setIsSubmitting(true);
     setFeedback(null);
     setStatusMessage('');
+    setBatchReport([]);
 
     let addedCount = 0;
     let skippedCount = 0;
-    const errorMessages: string[] = [];
+    const newReports: BatchReportItem[] = [];
 
     try {
+      const totalItems = directList.length + (directList.length === 0 ? pageList.length : pageList.slice(directList.length).length);
+
       // 1. Process Direct Stream URLs if entered in Field 1
       for (let i = 0; i < directList.length; i++) {
         const dUrl = directList[i];
         const pUrl = pageList[i] || '';
 
+        setBatchProgress({
+          current: i + 1,
+          total: totalItems,
+          stage: 'checking',
+          message: `Inspecting direct stream format (${i + 1}/${totalItems})`,
+          url: dUrl,
+          proxyName: 'Direct Stream',
+        });
+
         if (verifyBeforeAdd) {
-          setStatusMessage(`Testing direct stream playability (${i + 1}/${directList.length}): ${dUrl}`);
+          setBatchProgress({
+            current: i + 1,
+            total: totalItems,
+            stage: 'validating',
+            message: `Testing video playability (${i + 1}/${totalItems})`,
+            url: dUrl,
+            proxyName: 'Media Probe',
+          });
+
           const health = await verifyVideoLink(dUrl, 5000);
 
           if (health.status === 'broken') {
             skippedCount++;
-            errorMessages.push(`Stream link failed validation test: ${dUrl}`);
+            newReports.push({
+              id: `direct-${Date.now()}-${i}`,
+              sourceUrl: dUrl,
+              directUrl: dUrl,
+              status: 'skipped',
+              message: health.errorMessage || 'Failed media playability validation test',
+              type: 'direct',
+            });
             continue;
           }
         }
 
-        setStatusMessage(`Saving video stream (${i + 1}/${directList.length})...`);
+        setBatchProgress({
+          current: i + 1,
+          total: totalItems,
+          stage: 'saving',
+          message: `Saving stream to database (${i + 1}/${totalItems})`,
+          url: dUrl,
+        });
+
         await onSaveVideo({
+          url: dUrl,
           direct_url: dUrl,
+          sourcePage: pUrl,
           source_webpage: pUrl,
           page_url: pUrl,
           is_active: true,
+          status: 'Active',
+          type: 'direct',
           views: 0,
+          addedAt: new Date(),
           created_at: new Date(),
         });
+
         addedCount++;
+        newReports.push({
+          id: `direct-${Date.now()}-${i}`,
+          sourceUrl: dUrl,
+          directUrl: dUrl,
+          status: 'saved',
+          message: 'Saved directly to active streams',
+          type: 'direct',
+        });
       }
 
       // 2. Process Webpage URLs entered in Field 2 (Scrape & Extract Embedded Video Streams)
@@ -352,41 +424,101 @@ export const VideosTab: React.FC<VideosTabProps> = ({
         const webpagesToScrape = directList.length === 0 ? pageList : pageList.slice(directList.length);
 
         if (webpagesToScrape.length > 0) {
-          setStatusMessage(`Scraping webpage HTML & extracting video source (${webpagesToScrape.length} page${webpagesToScrape.length > 1 ? 's' : ''})...`);
+          const startIndex = directList.length;
 
-          const extractionResults = await extractVideoFromWebpage(webpagesToScrape);
+          const extractionResults = await extractVideoFromWebpage(
+            webpagesToScrape,
+            ({ index, total, stage, message, currentUrl, proxyName }) => {
+              setBatchProgress({
+                current: startIndex + index,
+                total: totalItems,
+                stage: stage as any,
+                message: `[${startIndex + index}/${totalItems}] ${message}`,
+                url: currentUrl,
+                proxyName,
+              });
+            }
+          );
 
-          for (const res of extractionResults) {
+          for (let k = 0; k < extractionResults.length; k++) {
+            const res = extractionResults[k];
+            const currentItemNumber = startIndex + k + 1;
+
             if (res.success && res.direct_url) {
               if (verifyBeforeAdd) {
-                setStatusMessage(`Testing extracted stream playability: ${res.direct_url}`);
+                setBatchProgress({
+                  current: currentItemNumber,
+                  total: totalItems,
+                  stage: 'validating',
+                  message: `Testing extracted stream playability (${currentItemNumber}/${totalItems})`,
+                  url: res.direct_url,
+                  proxyName: 'Media Probe',
+                });
+
                 const health = await verifyVideoLink(res.direct_url, 5000);
                 if (health.status === 'broken') {
                   skippedCount++;
-                  errorMessages.push(`Extracted stream from ${res.source_webpage} failed playability test.`);
+                  newReports.push({
+                    id: `scrape-${Date.now()}-${k}`,
+                    sourceUrl: res.source_webpage,
+                    directUrl: res.direct_url,
+                    status: 'skipped',
+                    message: health.errorMessage || 'Extracted stream failed playability test',
+                    proxyName: res.extractedVia,
+                    type: 'scraped',
+                  });
                   continue;
                 }
               }
 
-              setStatusMessage(`Storing extracted video stream from ${res.source_webpage}...`);
+              setBatchProgress({
+                current: currentItemNumber,
+                total: totalItems,
+                stage: 'saving',
+                message: `Storing extracted video stream (${currentItemNumber}/${totalItems})`,
+                url: res.direct_url,
+              });
+
               await onSaveVideo({
+                url: res.direct_url,
                 direct_url: res.direct_url,
+                sourcePage: res.source_webpage,
                 source_webpage: res.source_webpage,
                 page_url: res.source_webpage,
                 is_active: true,
+                status: 'Active',
+                type: 'scraped',
                 views: 0,
+                addedAt: new Date(),
                 created_at: new Date(),
               });
+
               addedCount++;
+              newReports.push({
+                id: `scrape-${Date.now()}-${k}`,
+                sourceUrl: res.source_webpage,
+                directUrl: res.direct_url,
+                status: 'saved',
+                message: 'Extracted & active',
+                proxyName: res.extractedVia,
+                type: 'scraped',
+              });
             } else {
               skippedCount++;
-              errorMessages.push(
-                res.error || `Could not extract video stream from webpage: ${res.source_webpage}`
-              );
+              newReports.push({
+                id: `scrape-${Date.now()}-${k}`,
+                sourceUrl: res.source_webpage,
+                status: 'failed',
+                message: res.error || 'Could not extract video stream from webpage HTML',
+                proxyName: res.extractedVia,
+                type: 'scraped',
+              });
             }
           }
         }
       }
+
+      setBatchReport(newReports);
 
       // 3. UI Toast/Feedback Result
       if (addedCount > 0) {
@@ -394,18 +526,15 @@ export const VideosTab: React.FC<VideosTabProps> = ({
           type: 'success',
           message:
             skippedCount > 0
-              ? `Successfully saved ${addedCount} stream link${addedCount > 1 ? 's' : ''}! (${skippedCount} broken or invalid link${skippedCount > 1 ? 's' : ''} skipped)`
-              : `Successfully added ${addedCount} stream link${addedCount > 1 ? 's' : ''}!`,
+              ? `Successfully processed: ${addedCount} stream${addedCount > 1 ? 's' : ''} saved to database (${skippedCount} invalid/broken skipped). Review badges below.`
+              : `Successfully added and verified ${addedCount} video stream${addedCount > 1 ? 's' : ''}!`,
         });
         setDirectUrl('');
         setPageUrl('');
       } else {
         setFeedback({
           type: 'error',
-          message:
-            errorMessages.length > 0
-              ? errorMessages.join(' | ')
-              : 'Extraction failed: No valid video stream (.mp4, .m3u8) was found.',
+          message: 'No video streams were added. Review individual error badges below.',
         });
       }
     } catch (err: any) {
@@ -416,6 +545,7 @@ export const VideosTab: React.FC<VideosTabProps> = ({
       });
     } finally {
       setIsSubmitting(false);
+      setBatchProgress(null);
       setStatusMessage('');
     }
   };
@@ -670,10 +800,173 @@ export const VideosTab: React.FC<VideosTabProps> = ({
             </button>
           </div>
 
-          {statusMessage && (
-            <div className="p-3 bg-red-950/40 border border-red-800/60 rounded-xl text-xs font-mono text-red-300 flex items-center gap-2 animate-pulse">
-              <RefreshCw className="w-3.5 h-3.5 animate-spin text-red-400 flex-shrink-0" />
-              <span>{statusMessage}</span>
+          {/* Live Step-by-Step Batch Progress Display */}
+          {batchProgress && (
+            <div className="p-4 rounded-xl border bg-zinc-950 border-red-900/50 space-y-2.5 shadow-inner">
+              <div className="flex items-center justify-between gap-2 flex-wrap text-xs">
+                <div className="flex items-center gap-2">
+                  <RefreshCw className="w-3.5 h-3.5 animate-spin text-red-500 flex-shrink-0" />
+                  <span className="font-bold text-zinc-200">
+                    {batchProgress.message}
+                  </span>
+                </div>
+                {batchProgress.proxyName && (
+                  <span className="px-2 py-0.5 rounded-full bg-blue-950/80 text-blue-400 border border-blue-800 text-[10px] font-mono font-bold flex items-center gap-1">
+                    <Radio className="w-2.5 h-2.5 text-blue-400 animate-pulse" />
+                    Proxy: {batchProgress.proxyName}
+                  </span>
+                )}
+              </div>
+
+              {/* Animated Progress Bar */}
+              <div className="w-full bg-zinc-900 rounded-full h-2 overflow-hidden border border-zinc-800">
+                <div
+                  className="bg-gradient-to-r from-red-600 to-amber-500 h-2 rounded-full transition-all duration-300"
+                  style={{
+                    width: `${Math.max(5, (batchProgress.current / batchProgress.total) * 100)}%`,
+                  }}
+                />
+              </div>
+
+              <div className="flex items-center justify-between text-[11px] text-zinc-500 font-mono">
+                <span className="truncate max-w-sm">{batchProgress.url}</span>
+                <span>
+                  {batchProgress.current} / {batchProgress.total} (
+                  {Math.round((batchProgress.current / batchProgress.total) * 100)}%)
+                </span>
+              </div>
+            </div>
+          )}
+
+          {/* Batch Processing Results Breakdown */}
+          {batchReport.length > 0 && !isSubmitting && (
+            <div className="mt-4 pt-4 border-t border-zinc-800/80 space-y-3">
+              <div className="flex items-center justify-between flex-wrap gap-2">
+                <div className="flex items-center gap-2">
+                  <ShieldCheck className="w-4 h-4 text-emerald-500" />
+                  <span className="text-xs font-black uppercase tracking-wider text-zinc-300">
+                    Batch Extraction Results ({batchReport.length} items)
+                  </span>
+                </div>
+
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="px-2 py-0.5 rounded-md bg-emerald-950/60 text-emerald-400 border border-emerald-800 text-[10px] font-bold">
+                    {batchReport.filter((r) => r.status === 'saved').length} Saved
+                  </span>
+                  {batchReport.some((r) => r.status === 'skipped') && (
+                    <span className="px-2 py-0.5 rounded-md bg-amber-950/60 text-amber-400 border border-amber-800 text-[10px] font-bold">
+                      {batchReport.filter((r) => r.status === 'skipped').length} Skipped
+                    </span>
+                  )}
+                  {batchReport.some((r) => r.status === 'failed') && (
+                    <span className="px-2 py-0.5 rounded-md bg-red-950/60 text-red-400 border border-red-800 text-[10px] font-bold">
+                      {batchReport.filter((r) => r.status === 'failed').length} Failed
+                    </span>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => setBatchReport([])}
+                    className="p-1 text-zinc-400 hover:text-white rounded hover:bg-zinc-800"
+                    title="Dismiss Results"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+
+              {/* Individual Link Badges */}
+              <div className="space-y-2 max-h-64 overflow-y-auto pr-1">
+                {batchReport.map((item) => (
+                  <div
+                    key={item.id}
+                    className={`p-3 rounded-xl border text-xs flex flex-col md:flex-row md:items-center justify-between gap-3 ${
+                      item.status === 'saved'
+                        ? 'bg-emerald-950/20 border-emerald-800/40 text-emerald-300'
+                        : item.status === 'skipped'
+                        ? 'bg-amber-950/20 border-amber-800/40 text-amber-300'
+                        : 'bg-red-950/20 border-red-800/40 text-red-300'
+                    }`}
+                  >
+                    <div className="space-y-1 min-w-0 flex-1">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        {item.status === 'saved' ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-600 text-white font-extrabold text-[10px] uppercase">
+                            <Check className="w-3 h-3" /> Saved & Active
+                          </span>
+                        ) : item.status === 'skipped' ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-600 text-white font-extrabold text-[10px] uppercase">
+                            <AlertCircle className="w-3 h-3" /> Skipped
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-red-600 text-white font-extrabold text-[10px] uppercase">
+                            <X className="w-3 h-3" /> Extraction Failed
+                          </span>
+                        )}
+
+                        <span className="text-[10px] font-mono text-zinc-400">
+                          {item.type === 'scraped' ? 'Webpage Scraping' : 'Direct Link'}
+                        </span>
+
+                        {item.proxyName && (
+                          <span className="text-[10px] font-mono px-1.5 py-0.2 rounded bg-zinc-800 text-zinc-300">
+                            {item.proxyName}
+                          </span>
+                        )}
+                      </div>
+
+                      <p className="font-mono text-[11px] text-zinc-300 truncate" title={item.sourceUrl}>
+                        {item.sourceUrl}
+                      </p>
+
+                      {item.directUrl && item.status === 'saved' && (
+                        <p className="font-mono text-[10px] text-emerald-400/90 truncate" title={item.directUrl}>
+                          → Stream: {item.directUrl}
+                        </p>
+                      )}
+
+                      {item.message && item.status !== 'saved' && (
+                        <p className="text-[11px] font-medium text-red-400">
+                          {item.message}
+                        </p>
+                      )}
+                    </div>
+
+                    {item.directUrl && item.status === 'saved' && (
+                      <div className="flex items-center gap-2 flex-shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => handleCopy(item.directUrl!, `report-${item.id}`)}
+                          className="px-2.5 py-1 rounded-lg bg-zinc-900 border border-zinc-700 hover:bg-zinc-800 text-zinc-200 text-[11px] font-bold flex items-center gap-1"
+                        >
+                          {copiedId === `report-${item.id}` ? (
+                            <Check className="w-3 h-3 text-emerald-400" />
+                          ) : (
+                            <Copy className="w-3 h-3" />
+                          )}
+                          <span>Copy Stream</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() =>
+                            setPreviewVideo({
+                              id: item.id,
+                              direct_url: item.directUrl!,
+                              is_active: true,
+                              views: 0,
+                              created_at: new Date(),
+                            })
+                          }
+                          className="px-2.5 py-1 rounded-lg bg-red-600 hover:bg-red-700 text-white text-[11px] font-bold flex items-center gap-1 shadow-sm"
+                        >
+                          <Play className="w-3 h-3 fill-white" />
+                          <span>Test Play</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
             </div>
           )}
         </form>
