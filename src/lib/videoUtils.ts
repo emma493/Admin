@@ -3,59 +3,98 @@
  */
 
 /**
- * Extract clean URL strings from any arbitrary input text.
+ * Advanced Link Extractor: Extracts clean URL strings from any arbitrary input text or format.
  * Handles:
- * - Double quotes: "https://example.com/video.mp4" or "video.mp4"
- * - Single quotes: 'https://example.com/stream.m3u8'
- * - Angle brackets: <https://example.com/video.webm>
- * - Comma, newline, space, tab, or bracket separated list of links
- * - URLs missing protocol (e.g., cdn.site.com/video.mp4 -> https://cdn.site.com/video.mp4)
+ * - URLs with commas, semicolons, quotes (single ' or double "), angle brackets <>, brackets [], parens ()
+ * - Markdown links [Title](https://...) and HTML <a href="..."> / <iframe src="...">
+ * - JSON arrays of strings ["https://..."]
+ * - Multiline text with surrounding conversational text (e.g., "Check this https://... and https://...")
+ * - URLs missing protocol (e.g., www.xxxfollow.com/... -> https://www.xxxfollow.com/...)
+ * - Trailing punctuation removal (trailing commas, periods, quotes, brackets)
  */
 export function extractLinksFromString(input: string): string[] {
   if (!input || typeof input !== 'string') return [];
 
-  // Match quoted strings, angle brackets, or space/comma separated tokens
-  // Matches "url", 'url', <url>, or raw tokens
-  const rawTokens = input.match(/(?:"[^"]+"|'[^']+'|<[^>]+>|[^\s,;\n\r"<>]+)/g) || [];
+  // Remove zero-width and invisible control characters
+  const cleanInput = input.replace(/[\u200B-\u200D\uFEFF]/g, '').trim();
+  if (!cleanInput) return [];
 
-  const extracted: string[] = [];
+  const foundUrls = new Set<string>();
 
-  for (let token of rawTokens) {
-    // Strip leading and trailing quotes, brackets, whitespace, commas, semicolons
-    token = token.trim().replace(/^["'<(\[\{]+|["'>)\],;]+$/g, '').trim();
+  // 1. Regex pattern for full HTTP/HTTPS URLs
+  const httpRegex = /https?:\/\/[^\s"'<>\`{}|\\^]+[a-zA-Z0-9/_~%&=?#\-+]/gi;
+  const httpMatches = cleanInput.match(httpRegex) || [];
+  for (const match of httpMatches) {
+    const trimmed = cleanTrailingPunctuation(match);
+    if (trimmed) foundUrls.add(trimmed);
+  }
 
+  // 2. Regex pattern for URLs starting with www.
+  const wwwRegex = /(?:^|[\s,;\"'<(])((?:www\.)[a-zA-Z0-9\-]+(?:\.[a-zA-Z0-9\-]+)+(?:\/[^\s"'<>\`{}|\\^]*)?)/gi;
+  let wwwMatch: RegExpExecArray | null;
+  while ((wwwMatch = wwwRegex.exec(cleanInput)) !== null) {
+    const trimmed = cleanTrailingPunctuation(wwwMatch[1]);
+    if (trimmed) foundUrls.add('https://' + trimmed);
+  }
+
+  // 3. Regex pattern for domain-like video site paths (e.g. xxxfollow.com/..., cdn.site.com/...)
+  const domainRegex = /(?:^|[\s,;\"'<(])((?:xxxfollow\.com|[a-zA-Z0-9\-]+\.(?:com|org|net|io|co|cc|tv|to|me|cc|video|cam|xxx|adult|club))\/(?:[^\s"'<>\`{}|\\^]*))/gi;
+  let domainMatch: RegExpExecArray | null;
+  while ((domainMatch = domainRegex.exec(cleanInput)) !== null) {
+    const trimmed = cleanTrailingPunctuation(domainMatch[1]);
+    if (trimmed && !trimmed.startsWith('http')) {
+      foundUrls.add('https://' + trimmed);
+    }
+  }
+
+  // 4. Token-based fallback for quoted strings, JSON tokens, and comma/space separated lists
+  const tokenMatches = cleanInput.match(/(?:"[^"]+"|'[^']+'|<[^>]+>|\[[^\]]+\]|\([^\)]+\)|[^\s,;\n\r]+)/g) || [];
+  for (let token of tokenMatches) {
+    token = token.trim().replace(/^["'<(\[\{]+|["'>)\],;\}]+$/g, '').trim();
     if (!token) continue;
 
-    // Check if token looks like a URL or video path
-    // Accept http://, https://, //, or domain-like formats (e.g. cdn.domain.com/path or filename.mp4)
     if (
       token.startsWith('http://') ||
       token.startsWith('https://') ||
       token.startsWith('//') ||
-      token.match(/^(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}(?::\d+)?(?:\/.*)?$/) ||
+      token.match(/^(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}(?:\/.*)?$/) ||
       token.match(/\.(mp4|m3u8|webm|mov|avi|flv|mkv|mpd)(\?.*)?$/i)
     ) {
-      // Normalize protocol
       let normalized = token;
       if (normalized.startsWith('//')) {
         normalized = 'https:' + normalized;
       } else if (!normalized.startsWith('http://') && !normalized.startsWith('https://')) {
         normalized = 'https://' + normalized;
       }
-
-      // Basic URL validity test
-      try {
-        new URL(normalized);
-        if (!extracted.includes(normalized)) {
-          extracted.push(normalized);
-        }
-      } catch (e) {
-        // Invalid URL format ignored
-      }
+      const trimmed = cleanTrailingPunctuation(normalized);
+      if (trimmed) foundUrls.add(trimmed);
     }
   }
 
-  return extracted;
+  // Final normalization and validation pass
+  const validList: string[] = [];
+  for (const candidate of foundUrls) {
+    try {
+      const parsed = new URL(candidate);
+      if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+        if (!validList.includes(parsed.href)) {
+          validList.push(parsed.href);
+        }
+      }
+    } catch (e) {
+      // Ignore unparseable fragments
+    }
+  }
+
+  return validList;
+}
+
+/**
+ * Strips trailing commas, dots, quotes, parens, brackets, semicolons from URL string
+ */
+function cleanTrailingPunctuation(url: string): string {
+  if (!url) return '';
+  return url.trim().replace(/[\.,;:!?)\]>\"\'\}]+$/, '').trim();
 }
 
 export interface LinkHealthResult {
