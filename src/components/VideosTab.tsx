@@ -121,7 +121,21 @@ export const VideosTab: React.FC<VideosTabProps> = ({
   // Summary Metrics
   const totalVideos = videos.length;
   const activeVideos = videos.filter((v) => v.is_active).length;
+  // All-time total, summed straight from the `views` counter on each video
+  // document in Firestore (kept in sync by trackVideoView on the public site).
   const totalViews = videos.reduce((acc, v) => acc + getVideoViewCount(v), 0);
+  // Rolling 24h count, derived from the timestamped `video_view` events the
+  // public site logs alongside each view increment.
+  const viewsLast24h = useMemo(() => {
+    if (!events || events.length === 0) return 0;
+    const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+    return events.reduce((count, ev) => {
+      if (ev.event_type !== 'video_view') return count;
+      const ts: any = ev.timestamp;
+      const millis = ts?.toMillis ? ts.toMillis() : new Date(ts).getTime();
+      return !isNaN(millis) && millis >= cutoff ? count + 1 : count;
+    }, 0);
+  }, [events]);
   const brokenCount = Object.values(healthMap).filter((status) => status === 'broken').length;
 
   // Handle Test Play video for admin preview (strictly does NOT increment views)
@@ -464,7 +478,7 @@ export const VideosTab: React.FC<VideosTabProps> = ({
   return (
     <div className="space-y-8">
       {/* 1. HEADER / SUMMARY BAR */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
         {/* Metric 1: Total Videos */}
         <div
           className={`p-5 rounded-2xl border transition-all ${
@@ -532,6 +546,30 @@ export const VideosTab: React.FC<VideosTabProps> = ({
             </span>
             <span className={`text-xs font-extrabold px-2 py-0.5 rounded-full border ${isDark ? 'bg-blue-950/80 text-blue-400 border-blue-900' : 'bg-blue-50 text-blue-700 border-blue-200'}`}>
               {activeVideos > 0 ? `${(totalViews / Math.max(activeVideos, 1)).toFixed(1)} avg/stream` : '0 views'}
+            </span>
+          </div>
+        </div>
+
+        {/* Metric 4: Views within 24 Hours */}
+        <div
+          className={`p-5 rounded-2xl border transition-all relative overflow-hidden ${
+            isDark ? 'bg-zinc-900/90 border-zinc-800 text-white' : 'bg-white border-zinc-200 text-zinc-900'
+          }`}
+        >
+          <div className="flex items-center justify-between">
+            <span className={`text-xs font-bold uppercase tracking-wider ${isDark ? 'text-zinc-400' : 'text-zinc-500'}`}>
+              Views (24h)
+            </span>
+            <div className="p-2.5 rounded-xl bg-amber-600/10 text-amber-500 border border-amber-600/20">
+              <Zap className="w-5 h-5 text-amber-500" />
+            </div>
+          </div>
+          <div className="mt-3 flex items-baseline gap-2">
+            <span className="text-3xl font-black tracking-tight font-mono text-amber-500">
+              {viewsLast24h.toLocaleString()}
+            </span>
+            <span className={`text-xs font-bold ${isDark ? 'text-zinc-400' : 'text-zinc-500'}`}>
+              last 24 hours
             </span>
           </div>
         </div>
