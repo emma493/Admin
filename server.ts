@@ -28,11 +28,15 @@ try {
   console.warn('Notice: Could not load firebase-applet-config.json on server:', e);
 }
 
+// Mandatory named Firestore database instance ID
+const FIRESTORE_DATABASE_ID =
+  firebaseConfig.firestoreDatabaseId || 'ai-studio-shortxxadmindash-86192a98-919e-436c-80b9-836d96e0e32b';
+
 // Initialize server-side Firestore instance
 const firebaseApp = initializeApp(firebaseConfig);
 const db = getFirestore(
   firebaseApp,
-  firebaseConfig.firestoreDatabaseId || '(default)'
+  FIRESTORE_DATABASE_ID
 );
 
 const VIDEOS_COLLECTION = 'videos';

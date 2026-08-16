@@ -43,6 +43,8 @@ interface DuplicateGroup {
 interface VideosTabProps {
   videos: VideoDocument[];
   events?: TelemetryEventDocument[];
+  realtimeTotalViews?: number;
+  realtimeViews24h?: number;
   onSaveVideo: (data: Omit<VideoDocument, 'id'> & { id?: string }) => Promise<void>;
   onDeleteVideo: (id: string) => Promise<void>;
   onToggleVideoStatus: (id: string, currentIsActive: boolean) => Promise<void>;
@@ -52,6 +54,8 @@ interface VideosTabProps {
 export const VideosTab: React.FC<VideosTabProps> = ({
   videos,
   events,
+  realtimeTotalViews,
+  realtimeViews24h,
   onSaveVideo,
   onDeleteVideo,
   onToggleVideoStatus,
@@ -121,21 +125,31 @@ export const VideosTab: React.FC<VideosTabProps> = ({
   // Summary Metrics
   const totalVideos = videos.length;
   const activeVideos = videos.filter((v) => v.is_active).length;
-  // All-time total, summed straight from the `views` counter on each video
-  // document in Firestore (kept in sync by trackVideoView on the public site).
-  const totalViews = videos.reduce((acc, v) => acc + getVideoViewCount(v), 0);
-  // Rolling 24h count, derived from the timestamped `video_view` events the
-  // public site logs alongside each view increment.
-  const viewsLast24h = useMemo(() => {
+  // All-time total, summed straight from the `views` counter on each video document in Firestore
+  const calculatedTotalViews = videos.reduce((acc, v) => acc + getVideoViewCount(v), 0);
+  const totalViews = typeof realtimeTotalViews === 'number' ? realtimeTotalViews : calculatedTotalViews;
+
+  // Rolling 24h count, querying 'events' for 'video_view' entries generated within the last 24h
+  const fallbackViews24h = useMemo(() => {
     if (!events || events.length === 0) return 0;
     const cutoff = Date.now() - 24 * 60 * 60 * 1000;
     return events.reduce((count, ev) => {
       if (ev.event_type !== 'video_view') return count;
+      let millis: number | null = null;
       const ts: any = ev.timestamp;
-      const millis = ts?.toMillis ? ts.toMillis() : new Date(ts).getTime();
-      return !isNaN(millis) && millis >= cutoff ? count + 1 : count;
+      if (ts) {
+        millis = ts?.toMillis ? ts.toMillis() : new Date(ts).getTime();
+      } else if ((ev as any).createdAt || (ev as any).created_at) {
+        const raw = (ev as any).createdAt || (ev as any).created_at;
+        millis = raw?.toMillis ? raw.toMillis() : new Date(raw).getTime();
+      } else {
+        millis = Date.now();
+      }
+      return millis !== null && !isNaN(millis) && millis >= cutoff ? count + 1 : count;
     }, 0);
   }, [events]);
+
+  const viewsLast24h = typeof realtimeViews24h === 'number' ? realtimeViews24h : fallbackViews24h;
   const brokenCount = Object.values(healthMap).filter((status) => status === 'broken').length;
 
   // Handle Test Play video for admin preview (strictly does NOT increment views)

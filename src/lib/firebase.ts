@@ -41,11 +41,12 @@ setLogLevel('silent');
 // Initialize Firebase App
 const app = initializeApp(firebaseConfig);
 
-// Initialize Firestore targeting the specific applet database ID
-export const db = getFirestore(
-  app,
-  firebaseConfig.firestoreDatabaseId || '(default)'
-);
+// Mandatory named Firestore database instance ID
+export const FIRESTORE_DATABASE_ID =
+  firebaseConfig.firestoreDatabaseId || 'ai-studio-shortxxadmindash-86192a98-919e-436c-80b9-836d96e0e32b';
+
+// Initialize Firestore targeting strictly the custom named Firestore database instance
+export const db = getFirestore(app, FIRESTORE_DATABASE_ID);
 
 // Collection References
 const USERS_COLLECTION = 'users';
@@ -476,6 +477,129 @@ export async function fetchNextVideoAndTrackView(excludeIds: string[] = []): Pro
     console.error('Error in fetchNextVideoAndTrackView:', err);
     return null;
   }
+}
+
+/**
+ * Real-time listener for Total Views calculated by summing the 'views' field
+ * across all documents in the 'videos' collection.
+ */
+export function subscribeToTotalViews(
+  onData: (totalViews: number) => void,
+  onError?: (err: Error) => void
+) {
+  const videosRef = collection(db, VIDEOS_COLLECTION);
+  return onSnapshot(
+    videosRef,
+    (snapshot) => {
+      let totalViews = 0;
+      snapshot.forEach((docSnap) => {
+        const data = docSnap.data();
+        totalViews += typeof data.views === 'number' ? data.views : Number(data.views) || 0;
+      });
+      onData(totalViews);
+    },
+    (err) => {
+      handleFirestoreError(err, OperationType.LIST, VIDEOS_COLLECTION);
+      if (onError) onError(err);
+    }
+  );
+}
+
+/**
+ * Real-time listener for Views (24H) querying the 'events' collection for 'video_view' entries
+ * generated within the last 24 hours.
+ * Includes fallback checking for `createdAt` (ISO string) if `timestamp` (ServerTimestamp)
+ * evaluates as null during immediate local writes.
+ */
+export function subscribeTo24hVideoViews(
+  onData: (views24h: number) => void,
+  onError?: (err: Error) => void
+) {
+  const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  const eventsRef = collection(db, EVENTS_COLLECTION);
+  const q = query(
+    eventsRef,
+    where('event_type', '==', 'video_view'),
+    where('timestamp', '>=', twentyFourHoursAgo)
+  );
+
+  return onSnapshot(
+    q,
+    (snapshot) => {
+      let views24h = 0;
+      const cutoffTime = Date.now() - 24 * 60 * 60 * 1000;
+
+      snapshot.forEach((docSnap) => {
+        const data = docSnap.data();
+        let tsMillis: number | null = null;
+
+        if (data.timestamp) {
+          if (typeof data.timestamp.toMillis === 'function') {
+            tsMillis = data.timestamp.toMillis();
+          } else if (data.timestamp instanceof Date) {
+            tsMillis = data.timestamp.getTime();
+          } else if (typeof data.timestamp === 'string' || typeof data.timestamp === 'number') {
+            tsMillis = new Date(data.timestamp).getTime();
+          }
+        } else if (data.createdAt || data.created_at) {
+          const raw = data.createdAt || data.created_at;
+          tsMillis = typeof raw?.toMillis === 'function' ? raw.toMillis() : new Date(raw).getTime();
+        } else {
+          // If immediate local write where timestamp has not resolved from server, treat as current timestamp
+          tsMillis = Date.now();
+        }
+
+        if (tsMillis !== null && !isNaN(tsMillis)) {
+          if (tsMillis >= cutoffTime) {
+            views24h++;
+          }
+        } else {
+          views24h++;
+        }
+      });
+
+      onData(views24h);
+    },
+    (err) => {
+      console.warn('Notice: 24h video views composite query falling back to resilient listener:', err);
+      // Fallback query by event_type with client-side 24h filtering
+      const fallbackQuery = query(eventsRef, where('event_type', '==', 'video_view'));
+      return onSnapshot(
+        fallbackQuery,
+        (fallbackSnap) => {
+          let count = 0;
+          const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+          fallbackSnap.forEach((docSnap) => {
+            const data = docSnap.data();
+            let tsMillis: number | null = null;
+            if (data.timestamp) {
+              if (typeof data.timestamp.toMillis === 'function') {
+                tsMillis = data.timestamp.toMillis();
+              } else if (data.timestamp instanceof Date) {
+                tsMillis = data.timestamp.getTime();
+              } else if (typeof data.timestamp === 'string' || typeof data.timestamp === 'number') {
+                tsMillis = new Date(data.timestamp).getTime();
+              }
+            } else if (data.createdAt || data.created_at) {
+              const raw = data.createdAt || data.created_at;
+              tsMillis = typeof raw?.toMillis === 'function' ? raw.toMillis() : new Date(raw).getTime();
+            } else {
+              tsMillis = Date.now();
+            }
+
+            if (tsMillis !== null && !isNaN(tsMillis) && tsMillis >= cutoff) {
+              count++;
+            }
+          });
+          onData(count);
+        },
+        (fallbackErr) => {
+          handleFirestoreError(fallbackErr, OperationType.LIST, EVENTS_COLLECTION);
+          if (onError) onError(fallbackErr);
+        }
+      );
+    }
+  );
 }
 
 export function subscribeToAdminAnalytics(

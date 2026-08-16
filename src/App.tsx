@@ -6,6 +6,8 @@
 import React, { useState, useEffect } from 'react';
 import {
   subscribeToVideos,
+  subscribeToTotalViews,
+  subscribeTo24hVideoViews,
   saveVideoDoc,
   deleteVideoDoc,
   toggleVideoStatus,
@@ -32,6 +34,8 @@ export default function App() {
   // Real-time Firestore State
   const [videos, setVideos] = useState<VideoDocument[]>([]);
   const [events, setEvents] = useState<TelemetryEventDocument[]>([]);
+  const [totalViews, setTotalViews] = useState<number>(0);
+  const [views24h, setViews24h] = useState<number>(0);
   const [firestoreConnected, setFirestoreConnected] = useState<boolean>(false);
 
   const toggleTheme = () => {
@@ -75,6 +79,24 @@ export default function App() {
     );
 
     return () => unsubscribeVideos();
+  }, []);
+
+  // Subscribe to Real Firestore Total Views Sum Aggregation
+  useEffect(() => {
+    const unsubscribeTotalViews = subscribeToTotalViews((count) => {
+      setTotalViews(count);
+    });
+
+    return () => unsubscribeTotalViews();
+  }, []);
+
+  // Subscribe to Real Firestore 24H Video Views Rolling Window
+  useEffect(() => {
+    const unsubscribe24hViews = subscribeTo24hVideoViews((count) => {
+      setViews24h(count);
+    });
+
+    return () => unsubscribe24hViews();
   }, []);
 
   // Subscribe to Real Firestore Telemetry Events Collection (for stream views metric sync)
@@ -122,6 +144,8 @@ export default function App() {
           <VideosTab
             videos={videos}
             events={events}
+            realtimeTotalViews={totalViews}
+            realtimeViews24h={views24h}
             onSaveVideo={async (data) => {
               await saveVideoDoc(data);
             }}
