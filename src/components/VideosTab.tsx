@@ -492,7 +492,7 @@ export const VideosTab: React.FC<VideosTabProps> = ({
   return (
     <div className="space-y-8">
       {/* 1. HEADER / SUMMARY BAR */}
-      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         {/* Metric 1: Total Videos */}
         <div
           className={`p-5 rounded-2xl border transition-all ${
@@ -531,59 +531,6 @@ export const VideosTab: React.FC<VideosTabProps> = ({
             <span className="text-3xl font-black tracking-tight font-mono text-emerald-500">{activeVideos}</span>
             <span className={`text-xs font-extrabold px-2 py-0.5 rounded-full border ${isDark ? 'bg-emerald-950/80 text-emerald-400 border-emerald-900' : 'bg-emerald-50 text-emerald-700 border-emerald-200'}`}>
               {totalVideos > 0 ? `${Math.round((activeVideos / totalVideos) * 100)}% active` : '0%'}
-            </span>
-          </div>
-        </div>
-
-        {/* Metric 3: Total Views (Beside Active Streams) */}
-        <div
-          className={`p-5 rounded-2xl border transition-all relative overflow-hidden ${
-            isDark ? 'bg-zinc-900/90 border-zinc-800 text-white' : 'bg-white border-zinc-200 text-zinc-900'
-          }`}
-        >
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-1.5">
-              <span className={`text-xs font-bold uppercase tracking-wider ${isDark ? 'text-zinc-400' : 'text-zinc-500'}`}>
-                Total Views
-              </span>
-              <span className="px-1.5 py-0.5 rounded-md bg-blue-500/10 text-blue-400 text-[10px] font-black uppercase border border-blue-500/20">
-                Live
-              </span>
-            </div>
-            <div className="p-2.5 rounded-xl bg-blue-600/10 text-blue-500 border border-blue-600/20">
-              <Eye className="w-5 h-5 text-blue-500" />
-            </div>
-          </div>
-          <div className="mt-3 flex items-baseline gap-2">
-            <span className="text-3xl font-black tracking-tight font-mono text-blue-500">
-              {totalViews.toLocaleString()}
-            </span>
-            <span className={`text-xs font-extrabold px-2 py-0.5 rounded-full border ${isDark ? 'bg-blue-950/80 text-blue-400 border-blue-900' : 'bg-blue-50 text-blue-700 border-blue-200'}`}>
-              {activeVideos > 0 ? `${(totalViews / Math.max(activeVideos, 1)).toFixed(1)} avg/stream` : '0 views'}
-            </span>
-          </div>
-        </div>
-
-        {/* Metric 4: Views within 24 Hours */}
-        <div
-          className={`p-5 rounded-2xl border transition-all relative overflow-hidden ${
-            isDark ? 'bg-zinc-900/90 border-zinc-800 text-white' : 'bg-white border-zinc-200 text-zinc-900'
-          }`}
-        >
-          <div className="flex items-center justify-between">
-            <span className={`text-xs font-bold uppercase tracking-wider ${isDark ? 'text-zinc-400' : 'text-zinc-500'}`}>
-              Views (24h)
-            </span>
-            <div className="p-2.5 rounded-xl bg-amber-600/10 text-amber-500 border border-amber-600/20">
-              <Zap className="w-5 h-5 text-amber-500" />
-            </div>
-          </div>
-          <div className="mt-3 flex items-baseline gap-2">
-            <span className="text-3xl font-black tracking-tight font-mono text-amber-500">
-              {viewsLast24h.toLocaleString()}
-            </span>
-            <span className={`text-xs font-bold ${isDark ? 'text-zinc-400' : 'text-zinc-500'}`}>
-              last 24 hours
             </span>
           </div>
         </div>
