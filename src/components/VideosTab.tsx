@@ -863,6 +863,7 @@ export const VideosTab: React.FC<VideosTabProps> = ({
                 <th className="py-3.5 px-4">Firestore Doc ID</th>
                 <th className="py-3.5 px-4">Direct Stream URL</th>
                 <th className="py-3.5 px-4 text-center">Status</th>
+                <th className="py-3.5 px-4 text-center">HLS / ABR</th>
                 <th className="py-3.5 px-4 text-center">Stream Health</th>
                 <th className="py-3.5 px-4 text-center">Views</th>
                 <th className="py-3.5 px-4 text-right">Actions</th>
@@ -871,7 +872,7 @@ export const VideosTab: React.FC<VideosTabProps> = ({
             <tbody className={`divide-y ${isDark ? 'divide-zinc-800/60' : 'divide-zinc-100'}`}>
               {filteredVideos.length === 0 ? (
                 <tr>
-                  <td colSpan={7} className={`py-12 text-center ${isDark ? 'text-zinc-500' : 'text-zinc-400'}`}>
+                  <td colSpan={8} className={`py-12 text-center ${isDark ? 'text-zinc-500' : 'text-zinc-400'}`}>
                     <Film className="w-8 h-8 mx-auto mb-2 text-zinc-600 opacity-60" />
                     <p className="font-bold text-sm">No videos found.</p>
                     <p className="text-xs mt-1">Add direct stream links using the form above or adjust your search filters.</p>
@@ -963,6 +964,42 @@ export const VideosTab: React.FC<VideosTabProps> = ({
                             </span>
                           )}
                         </button>
+                      </td>
+
+                      {/* HLS / ABR Transcode Status - driven by the transcodeVideo Cloud
+                          Function's `status` field on this doc. Legacy/untouched docs
+                          (no status field yet) just show a neutral "Legacy" chip and
+                          keep playing fine from direct_url in the meantime. */}
+                      <td className="py-3.5 px-4 text-center">
+                        {video.status === 'ready' && video.hls_url ? (
+                          <span
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-[10px] font-extrabold"
+                            title={video.hls_url}
+                          >
+                            <Layers className="w-3 h-3" />
+                            Ready
+                          </span>
+                        ) : video.status === 'processing' ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-400 border border-amber-500/30 text-[10px] font-extrabold animate-pulse">
+                            <RefreshCw className="w-3 h-3 animate-spin" />
+                            Processing
+                          </span>
+                        ) : video.status === 'failed' ? (
+                          <span
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-red-600/20 text-red-400 border border-red-600/30 text-[10px] font-extrabold"
+                            title={video.status_error || 'Transcode failed - still serving from direct_url'}
+                          >
+                            <AlertTriangle className="w-3 h-3" />
+                            Failed
+                          </span>
+                        ) : (
+                          <span
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-zinc-700/40 text-zinc-400 border border-zinc-700 text-[10px] font-extrabold"
+                            title="Not yet picked up by the transcode pipeline - still serving from direct_url"
+                          >
+                            Legacy
+                          </span>
+                        )}
                       </td>
 
                       {/* Stream Health */}

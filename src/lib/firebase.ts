@@ -340,6 +340,12 @@ export function subscribeToVideos(
           is_active: typeof data.is_active === 'boolean' ? data.is_active : true,
           created_at: data.created_at || new Date(),
           views: typeof data.views === 'number' ? data.views : 0,
+          // Populated by the transcodeVideo Cloud Function; undefined on
+          // legacy docs or ones not yet picked up by the pipeline.
+          status: data.status || undefined,
+          status_error: data.status_error || undefined,
+          hls_url: data.hls_url || undefined,
+          poster_url: data.poster_url || undefined,
         };
       });
       onData(items);

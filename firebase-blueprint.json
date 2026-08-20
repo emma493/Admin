@@ -65,7 +65,11 @@
         "direct_url": { "type": "string" },
         "is_active": { "type": "boolean" },
         "created_at": { "type": "string", "format": "date-time" },
-        "views": { "type": "number" }
+        "views": { "type": "number" },
+        "status": { "type": "string", "enum": ["processing", "ready", "failed"], "description": "Written by the transcodeVideo Cloud Function; absent on docs not yet picked up by the pipeline" },
+        "status_error": { "type": "string", "description": "Set when status is 'failed'" },
+        "hls_url": { "type": "string", "description": "Public master.m3u8 URL, set when status is 'ready'" },
+        "poster_url": { "type": "string", "description": "Public poster JPEG URL, set when status is 'ready'" }
       },
       "required": ["direct_url", "is_active", "views"]
     },
