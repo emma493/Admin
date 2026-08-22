@@ -9,15 +9,12 @@ import {
   X,
   ChevronLeft,
   ChevronRight,
-  Sparkles,
-  ShieldCheck,
 } from 'lucide-react';
 import { BrandLogo } from './LogosAndFlags';
 
 interface SidebarProps {
-  activeTab: 'videos' | 'test';
-  setActiveTab: (tab: 'videos' | 'test') => void;
-  unapprovedCount?: number;
+  activeTab: 'videos';
+  setActiveTab: (tab: 'videos') => void;
   firestoreConnected: boolean;
   isCollapsed: boolean;
   onToggleCollapse: () => void;
@@ -28,7 +25,6 @@ interface SidebarProps {
 export const Sidebar: React.FC<SidebarProps> = ({
   activeTab,
   setActiveTab,
-  unapprovedCount = 0,
   firestoreConnected,
   isCollapsed,
   onToggleCollapse,
@@ -108,14 +104,14 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 Navigation
               </span>
             )}
-            <nav className="mt-2 space-y-1.5">
-              {/* Videos Manager */}
+            <nav className="mt-2 space-y-1">
+              {/* Videos */}
               <button
                 onClick={() => {
                   setActiveTab('videos');
                   if (onCloseMobile) onCloseMobile();
                 }}
-                title="Videos Manager"
+                title="Videos"
                 className={`w-full flex items-center ${
                   isCollapsed && !isMobileOpen ? 'justify-center px-0 py-3' : 'justify-between px-3.5 py-2.5'
                 } rounded-xl text-xs font-bold transition-all ${
@@ -128,33 +124,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
                   <Video className="w-4 h-4 flex-shrink-0 text-red-400" />
                   {(!isCollapsed || isMobileOpen) && <span>Videos</span>}
                 </div>
-              </button>
-
-              {/* Test Tab */}
-              <button
-                onClick={() => {
-                  setActiveTab('test');
-                  if (onCloseMobile) onCloseMobile();
-                }}
-                title="Video Quality Test & Approval"
-                className={`w-full flex items-center ${
-                  isCollapsed && !isMobileOpen ? 'justify-center px-0 py-3' : 'justify-between px-3.5 py-2.5'
-                } rounded-xl text-xs font-bold transition-all ${
-                  activeTab === 'test'
-                    ? 'bg-red-600 text-white shadow-md shadow-red-600/20'
-                    : 'text-zinc-400 hover:text-white hover:bg-zinc-900'
-                }`}
-              >
-                <div className="flex items-center gap-2.5">
-                  <Sparkles className="w-4 h-4 flex-shrink-0 text-amber-400" />
-                  {(!isCollapsed || isMobileOpen) && <span>Test</span>}
-                </div>
-
-                {(!isCollapsed || isMobileOpen) && unapprovedCount > 0 && (
-                  <span className="px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-500 text-black">
-                    {unapprovedCount}
-                  </span>
-                )}
               </button>
             </nav>
           </div>

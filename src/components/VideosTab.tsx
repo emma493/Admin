@@ -29,14 +29,10 @@ import {
   Globe,
   ShieldCheck,
   ArrowRight,
-  EyeOff,
-  LayoutGrid,
-  List,
 } from 'lucide-react';
 import { VideoDocument, TelemetryEventDocument, ThemeMode } from '../types';
 import { extractLinksFromString, verifyVideoLink, verifyVideoLinksInSessions } from '../lib/videoUtils';
 import { incrementVideoViews, logTelemetryEvent, fetchNextVideoAndTrackView, saveVideoDocsBatch } from '../lib/firebase';
-import { LazyVideoPreviewPlayer } from './LazyVideoPreviewPlayer';
 
 interface DuplicateGroup {
   url: string;
@@ -52,8 +48,6 @@ interface VideosTabProps {
   onSaveVideo: (data: Omit<VideoDocument, 'id'> & { id?: string }) => Promise<void>;
   onDeleteVideo: (id: string) => Promise<void>;
   onToggleVideoStatus: (id: string, currentIsActive: boolean) => Promise<void>;
-  onToggleApproval?: (id: string, currentIsApproved: boolean) => Promise<void>;
-  onBatchApprove?: (ids: string[], isApproved: boolean) => Promise<void>;
   theme: ThemeMode;
 }
 
@@ -65,8 +59,6 @@ export const VideosTab: React.FC<VideosTabProps> = ({
   onSaveVideo,
   onDeleteVideo,
   onToggleVideoStatus,
-  onToggleApproval,
-  onBatchApprove,
   theme,
 }) => {
   const isDark = theme === 'dark';
@@ -81,12 +73,10 @@ export const VideosTab: React.FC<VideosTabProps> = ({
   // Search & Filter State
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [statusFilter, setStatusFilter] = useState<'All' | 'Active' | 'Inactive'>('All');
-  const [approvalFilter, setApprovalFilter] = useState<'All' | 'Approved' | 'NotApproved'>('All');
 
-  // Table Row Selection for Bulk Operations (Copy, Delete, Toggle, Approve)
+  // Table Row Selection for Bulk Operations (Copy, Delete, Toggle)
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [isDeletingBatch, setIsDeletingBatch] = useState<boolean>(false);
-  const [isApprovingBatch, setIsApprovingBatch] = useState<boolean>(false);
 
   // Video Health Checking State
   const [healthMap, setHealthMap] = useState<Record<string, 'healthy' | 'broken' | 'checking'>>({});
@@ -102,26 +92,6 @@ export const VideosTab: React.FC<VideosTabProps> = ({
 
   // Clipboard Copied indicator state
   const [copiedId, setCopiedId] = useState<string | null>(null);
-
-  // Live Auto-Play Stream Preview Mode (persisted in localStorage)
-  const [isPreviewEnabled, setIsPreviewEnabled] = useState<boolean>(() => {
-    try {
-      return localStorage.getItem('admin_stream_preview_mode') === 'true';
-    } catch {
-      return false;
-    }
-  });
-  const [previewLayout, setPreviewLayout] = useState<'table' | 'grid'>('table');
-
-  const handleTogglePreviewMode = () => {
-    setIsPreviewEnabled((prev) => {
-      const next = !prev;
-      try {
-        localStorage.setItem('admin_stream_preview_mode', String(next));
-      } catch (e) {}
-      return next;
-    });
-  };
 
   // Universal link extraction (handles double quotes "vid2.mp4", single quotes, commas, brackets, etc.)
   const parsedDirectUrls = extractLinksFromString(directUrl);
@@ -195,20 +165,13 @@ export const VideosTab: React.FC<VideosTabProps> = ({
       video.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
       video.direct_url.toLowerCase().includes(searchQuery.toLowerCase());
 
-    // Filter by active status
+    // Filter by status
     const matchesStatus =
       statusFilter === 'All' ||
       (statusFilter === 'Active' && video.is_active) ||
       (statusFilter === 'Inactive' && !video.is_active);
 
-    // Filter by approval status
-    const isApproved = video.is_approved === true || video.approved === true;
-    const matchesApproval =
-      approvalFilter === 'All' ||
-      (approvalFilter === 'Approved' && isApproved) ||
-      (approvalFilter === 'NotApproved' && !isApproved);
-
-    return matchesSearch && matchesStatus && matchesApproval;
+    return matchesSearch && matchesStatus;
   });
 
   // Health Inspection & Auto-Purging function
@@ -342,29 +305,6 @@ export const VideosTab: React.FC<VideosTabProps> = ({
       });
     } finally {
       setIsDeletingBatch(false);
-    }
-  };
-
-  // Bulk approve / unapprove selected videos
-  const handleBatchApprovalToggle = async (approve: boolean) => {
-    if (selectedIds.length === 0 || !onBatchApprove) return;
-    setIsApprovingBatch(true);
-    try {
-      await onBatchApprove(selectedIds, approve);
-      setFeedback({
-        type: 'success',
-        message: `Successfully marked ${selectedIds.length} video${selectedIds.length > 1 ? 's' : ''} as ${
-          approve ? 'Approved' : 'Not Approved'
-        }!`,
-      });
-      setSelectedIds([]);
-    } catch (err: any) {
-      setFeedback({
-        type: 'error',
-        message: `Failed to update approval status: ${err?.message || 'Error'}`,
-      });
-    } finally {
-      setIsApprovingBatch(false);
     }
   };
 
@@ -842,65 +782,11 @@ export const VideosTab: React.FC<VideosTabProps> = ({
                 )}
               </button>
             )}
-
-            {/* Feature: Live Viewport-Aware Auto-Play Video Previews Toggle */}
-            <button
-              onClick={handleTogglePreviewMode}
-              className={`ml-2 px-3 py-1.5 rounded-xl text-xs font-extrabold flex items-center gap-2 border transition-all active:scale-95 shadow-sm ${
-                isPreviewEnabled
-                  ? 'bg-red-600 hover:bg-red-500 text-white border-red-500 shadow-red-600/30 ring-2 ring-red-500/20'
-                  : isDark
-                  ? 'bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border-zinc-700'
-                  : 'bg-zinc-100 hover:bg-zinc-200 text-zinc-800 border-zinc-300'
-              }`}
-              title="Toggle Live Video Previews: Viewport-aware video players auto-play looped & muted only when scrolled into view, freeing RAM & CPU/GPU when scrolled off-screen."
-            >
-              {isPreviewEnabled ? (
-                <>
-                  <Eye className="w-3.5 h-3.5 text-white" />
-                  <span>Live Previews: ON</span>
-                  <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
-                </>
-              ) : (
-                <>
-                  <EyeOff className="w-3.5 h-3.5 text-zinc-400" />
-                  <span>Live Previews: OFF</span>
-                </>
-              )}
-            </button>
-
-            {/* Layout switch when Preview is enabled */}
-            {isPreviewEnabled && (
-              <div className="flex items-center p-0.5 rounded-xl border bg-zinc-950 border-zinc-800 text-xs ml-1">
-                <button
-                  onClick={() => setPreviewLayout('table')}
-                  className={`p-1.5 rounded-lg transition-all ${
-                    previewLayout === 'table'
-                      ? 'bg-red-600 text-white shadow-sm'
-                      : 'text-zinc-400 hover:text-white'
-                  }`}
-                  title="Table layout with Mini Stream Player"
-                >
-                  <List className="w-3.5 h-3.5" />
-                </button>
-                <button
-                  onClick={() => setPreviewLayout('grid')}
-                  className={`p-1.5 rounded-lg transition-all ${
-                    previewLayout === 'grid'
-                      ? 'bg-red-600 text-white shadow-sm'
-                      : 'text-zinc-400 hover:text-white'
-                  }`}
-                  title="Gallery Grid layout with Auto-Play Video Cards"
-                >
-                  <LayoutGrid className="w-3.5 h-3.5" />
-                </button>
-              </div>
-            )}
           </div>
 
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
             {/* Search Input */}
-            <div className="relative min-w-[200px]">
+            <div className="relative min-w-[220px]">
               <Search className="w-4 h-4 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2" />
               <input
                 type="text"
@@ -922,12 +808,12 @@ export const VideosTab: React.FC<VideosTabProps> = ({
             </div>
 
             {/* Status Filter */}
-            <div className="flex items-center gap-1 p-1 rounded-xl border bg-zinc-950 border-zinc-800 text-xs">
+            <div className="flex items-center gap-1.5 p-1 rounded-xl border bg-zinc-950 border-zinc-800 text-xs">
               {(['All', 'Active', 'Inactive'] as const).map((filterOpt) => (
                 <button
                   key={filterOpt}
                   onClick={() => setStatusFilter(filterOpt)}
-                  className={`px-2.5 py-1 rounded-lg font-extrabold transition-all ${
+                  className={`px-3 py-1 rounded-lg font-extrabold transition-all ${
                     statusFilter === filterOpt
                       ? 'bg-red-600 text-white'
                       : 'text-zinc-400 hover:text-white'
@@ -936,42 +822,6 @@ export const VideosTab: React.FC<VideosTabProps> = ({
                   {filterOpt}
                 </button>
               ))}
-            </div>
-
-            {/* Approval Filter */}
-            <div className="flex items-center gap-1 p-1 rounded-xl border bg-zinc-950 border-zinc-800 text-xs">
-              <button
-                onClick={() => setApprovalFilter('All')}
-                className={`px-2.5 py-1 rounded-lg font-extrabold transition-all ${
-                  approvalFilter === 'All'
-                    ? 'bg-red-600 text-white'
-                    : 'text-zinc-400 hover:text-white'
-                }`}
-              >
-                All Approval
-              </button>
-              <button
-                onClick={() => setApprovalFilter('Approved')}
-                className={`px-2.5 py-1 rounded-lg font-extrabold transition-all flex items-center gap-1 ${
-                  approvalFilter === 'Approved'
-                    ? 'bg-emerald-600 text-white'
-                    : 'text-zinc-400 hover:text-white'
-                }`}
-              >
-                <CheckCircle2 className="w-3 h-3 text-emerald-400" />
-                Approved
-              </button>
-              <button
-                onClick={() => setApprovalFilter('NotApproved')}
-                className={`px-2.5 py-1 rounded-lg font-extrabold transition-all flex items-center gap-1 ${
-                  approvalFilter === 'NotApproved'
-                    ? 'bg-amber-600 text-white'
-                    : 'text-zinc-400 hover:text-white'
-                }`}
-              >
-                <AlertCircle className="w-3 h-3 text-amber-400" />
-                Not Approved
-              </button>
             </div>
           </div>
         </div>
@@ -986,37 +836,12 @@ export const VideosTab: React.FC<VideosTabProps> = ({
             </div>
 
             <div className="flex items-center gap-2 flex-wrap">
-              {/* Batch Approve Selected */}
-              {onBatchApprove && (
-                <>
-                  <button
-                    onClick={() => handleBatchApprovalToggle(true)}
-                    disabled={isApprovingBatch}
-                    className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold flex items-center gap-1.5 shadow-sm transition-all active:scale-95 disabled:opacity-50"
-                    title="Mark all selected videos as Approved"
-                  >
-                    <CheckCircle2 className="w-3.5 h-3.5" />
-                    <span>Approve Selected ({selectedIds.length})</span>
-                  </button>
-
-                  <button
-                    onClick={() => handleBatchApprovalToggle(false)}
-                    disabled={isApprovingBatch}
-                    className="px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-amber-400 hover:text-amber-300 font-extrabold flex items-center gap-1.5 border border-zinc-700 transition-all active:scale-95 disabled:opacity-50"
-                    title="Mark all selected videos as Not Approved"
-                  >
-                    <AlertCircle className="w-3.5 h-3.5" />
-                    <span>Unapprove Selected</span>
-                  </button>
-                </>
-              )}
-
               <button
                 onClick={() => handleCopyCommaSeparated('direct')}
                 className="px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-white font-extrabold flex items-center gap-1.5 transition-all"
               >
                 <Copy className="w-3.5 h-3.5 text-red-400" />
-                <span>Copy Selected Direct Links</span>
+                <span>Copy Selected Direct Links (Comma Separated)</span>
               </button>
 
               <button
@@ -1039,450 +864,251 @@ export const VideosTab: React.FC<VideosTabProps> = ({
           </div>
         )}
 
-        {/* Table Content or Grid View */}
-        {isPreviewEnabled && previewLayout === 'grid' ? (
-          /* GRID GALLERY PREVIEW VIEW */
-          <div className="p-4 sm:p-6">
-            {filteredVideos.length === 0 ? (
-              <div className={`py-16 text-center ${isDark ? 'text-zinc-500' : 'text-zinc-400'}`}>
-                <Film className="w-10 h-10 mx-auto mb-3 text-zinc-600 opacity-60" />
-                <p className="font-black text-base">No videos matching filter.</p>
-                <p className="text-xs mt-1">Adjust search parameters or add video streams above.</p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4">
-                {filteredVideos.map((video) => {
+        {/* Table Content */}
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse text-xs">
+            <thead>
+              <tr
+                className={`border-b text-[11px] font-black uppercase tracking-wider ${
+                  isDark
+                    ? 'bg-zinc-950 border-zinc-800 text-zinc-400'
+                    : 'bg-zinc-100 border-zinc-200 text-zinc-600'
+                }`}
+              >
+                <th className="py-3.5 px-3 w-10 text-center">
+                  <input
+                    type="checkbox"
+                    checked={selectedIds.length === filteredVideos.length && filteredVideos.length > 0}
+                    onChange={handleSelectAll}
+                    className="rounded border-zinc-700 text-red-600 focus:ring-red-600 bg-zinc-900 cursor-pointer"
+                    title="Select / Deselect All"
+                  />
+                </th>
+                <th className="py-3.5 px-4">Firestore Doc ID</th>
+                <th className="py-3.5 px-4">Direct Stream URL</th>
+                <th className="py-3.5 px-4 text-center">Status</th>
+                <th className="py-3.5 px-4 text-center">HLS / ABR</th>
+                <th className="py-3.5 px-4 text-center">Stream Health</th>
+                <th className="py-3.5 px-4 text-center">Views</th>
+                <th className="py-3.5 px-4 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody className={`divide-y ${isDark ? 'divide-zinc-800/60' : 'divide-zinc-100'}`}>
+              {filteredVideos.length === 0 ? (
+                <tr>
+                  <td colSpan={8} className={`py-12 text-center ${isDark ? 'text-zinc-500' : 'text-zinc-400'}`}>
+                    <Film className="w-8 h-8 mx-auto mb-2 text-zinc-600 opacity-60" />
+                    <p className="font-bold text-sm">No videos found.</p>
+                    <p className="text-xs mt-1">Add direct stream links using the form above or adjust your search filters.</p>
+                  </td>
+                </tr>
+              ) : (
+                filteredVideos.map((video) => {
                   const isSelected = selectedIds.includes(video.id);
 
                   return (
-                    <div
+                    <tr
                       key={video.id}
-                      className={`relative rounded-2xl border transition-all overflow-hidden flex flex-col justify-between ${
+                      className={`transition-colors ${
                         isSelected
-                          ? 'border-red-500 ring-2 ring-red-500/30'
+                          ? isDark
+                            ? 'bg-red-950/20'
+                            : 'bg-red-50/50'
                           : isDark
-                          ? 'bg-zinc-950/70 border-zinc-800/80 hover:border-zinc-700'
-                          : 'bg-zinc-50 border-zinc-200 hover:border-zinc-300'
+                          ? 'hover:bg-zinc-800/50'
+                          : 'hover:bg-zinc-50'
                       }`}
                     >
-                      {/* Top Checkbox & ID Bar */}
-                      <div className="p-2.5 flex items-center justify-between border-b border-zinc-800/40 bg-zinc-900/30 text-xs">
-                        <div className="flex items-center gap-2">
-                          <input
-                            type="checkbox"
-                            checked={isSelected}
-                            onChange={() => handleToggleSelect(video.id)}
-                            className="rounded border-zinc-700 text-red-600 focus:ring-red-600 bg-zinc-900 cursor-pointer"
-                          />
-                          <span className="font-mono font-bold text-red-500 text-[11px] truncate max-w-[100px]" title={video.id}>
+                      {/* Checkbox */}
+                      <td className="py-3.5 px-3 text-center">
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => handleToggleSelect(video.id)}
+                          className="rounded border-zinc-700 text-red-600 focus:ring-red-600 bg-zinc-900 cursor-pointer"
+                        />
+                      </td>
+
+                      {/* Firestore Doc ID */}
+                      <td className="py-3.5 px-4 font-mono font-bold text-red-500">
+                        <div className="flex items-center gap-1.5">
+                          <span className="truncate max-w-[120px]" title={video.id}>
                             {video.id}
                           </span>
-                        </div>
-                        <button
-                          onClick={() => handleCopy(video.id, `grid-id-${video.id}`)}
-                          className="p-1 rounded hover:bg-zinc-800 text-zinc-400 hover:text-white"
-                          title="Copy Document ID"
-                        >
-                          {copiedId === `grid-id-${video.id}` ? (
-                            <Check className="w-3 h-3 text-emerald-400" />
-                          ) : (
-                            <Copy className="w-3 h-3" />
-                          )}
-                        </button>
-                      </div>
-
-                      {/* Viewport-Aware Lazy Video Player */}
-                      <div className="p-2.5">
-                        <LazyVideoPreviewPlayer
-                          video={video}
-                          onDelete={onDeleteVideo}
-                          onExpand={handleTestPlayVideo}
-                          isDark={isDark}
-                          aspectRatio="video"
-                        />
-                      </div>
-
-                      {/* Video Details & Meta */}
-                      <div className="p-3 pt-1 space-y-2 text-xs flex-1 flex flex-col justify-between">
-                        {/* URL snippet */}
-                        <div className="flex items-center justify-between gap-1 p-1.5 rounded-lg bg-zinc-900/40 border border-zinc-800/40 text-[11px] font-mono">
-                          <span className="truncate text-zinc-300" title={video.direct_url}>
-                            {video.direct_url}
-                          </span>
                           <button
-                            onClick={() => handleCopy(video.direct_url, `grid-url-${video.id}`)}
-                            className="p-1 rounded hover:bg-zinc-800 text-zinc-400 hover:text-white flex-shrink-0"
-                            title="Copy Direct URL"
+                            onClick={() => handleCopy(video.id, `id-${video.id}`)}
+                            className="p-1 rounded hover:bg-zinc-800 text-zinc-400 hover:text-white"
+                            title="Copy ID"
                           >
-                            {copiedId === `grid-url-${video.id}` ? (
-                              <Check className="w-3 h-3 text-emerald-400" />
+                            {copiedId === `id-${video.id}` ? (
+                              <Check className="w-3 h-3 text-emerald-500" />
                             ) : (
                               <Copy className="w-3 h-3" />
                             )}
                           </button>
                         </div>
+                      </td>
 
-                        {/* Status & Views Row */}
-                        <div className="flex flex-wrap items-center justify-between gap-1.5 text-[11px] pt-1">
-                          {/* Active / Inactive Status */}
+                      {/* Direct Stream URL */}
+                      <td className="py-3.5 px-4 max-w-md truncate font-mono text-[11px]">
+                        <div className="flex items-center gap-1.5">
+                          <span className={`truncate ${isDark ? 'text-zinc-200' : 'text-zinc-800'}`} title={video.direct_url}>
+                            {video.direct_url}
+                          </span>
                           <button
-                            onClick={() => onToggleVideoStatus(video.id, video.is_active)}
-                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black transition-all active:scale-95"
+                            onClick={() => handleCopy(video.direct_url, `url-${video.id}`)}
+                            className="p-1 rounded hover:bg-zinc-800 text-zinc-400 hover:text-white flex-shrink-0"
+                            title="Copy Direct URL"
                           >
-                            {video.is_active ? (
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-600 text-white">
-                                <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
-                                Active
-                              </span>
+                            {copiedId === `url-${video.id}` ? (
+                              <Check className="w-3 h-3 text-emerald-500" />
                             ) : (
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-zinc-700 text-zinc-300">
-                                Inactive
-                              </span>
+                              <Copy className="w-3 h-3" />
                             )}
                           </button>
-
-                          {/* Approval Status Toggle */}
-                          <button
-                            onClick={() =>
-                              onToggleApproval &&
-                              onToggleApproval(
-                                video.id,
-                                video.is_approved === true || video.approved === true
-                              )
-                            }
-                            className="transition-transform active:scale-95"
-                            title="Click to toggle approval status"
-                          >
-                            {video.is_approved === true || video.approved === true ? (
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-600/20 text-emerald-400 border border-emerald-500/30">
-                                <CheckCircle2 className="w-3 h-3 text-emerald-400" />
-                                Approved
-                              </span>
-                            ) : (
-                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-500/20 text-amber-400 border border-amber-500/30">
-                                <AlertCircle className="w-3 h-3 text-amber-400" />
-                                Not Approved
-                              </span>
-                            )}
-                          </button>
-
-                          <div className="flex items-center gap-1 font-mono font-bold text-blue-500 ml-auto">
-                            <Eye className="w-3 h-3" />
-                            <span>{getVideoViewCount(video).toLocaleString()}</span>
-                          </div>
                         </div>
+                      </td>
 
-                        {/* Action Buttons Row */}
-                        <div className="pt-2 border-t border-zinc-800/40 flex items-center justify-between gap-2">
+                      {/* Status Toggle Badge */}
+                      <td className="py-3.5 px-4 text-center">
+                        <button
+                          onClick={() => onToggleVideoStatus(video.id, video.is_active)}
+                          className="transition-transform active:scale-95"
+                          title="Click to toggle status"
+                        >
+                          {video.is_active ? (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-emerald-600 text-white shadow-sm hover:bg-emerald-500">
+                              <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
+                              Active
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-zinc-700 text-zinc-300 hover:bg-zinc-600">
+                              <span className="w-1.5 h-1.5 rounded-full bg-zinc-400" />
+                              Inactive
+                            </span>
+                          )}
+                        </button>
+                      </td>
+
+                      {/* HLS / ABR Transcode Status - driven by the transcodeVideo Cloud
+                          Function's `status` field on this doc. Legacy/untouched docs
+                          (no status field yet) just show a neutral "Legacy" chip and
+                          keep playing fine from direct_url in the meantime. */}
+                      <td className="py-3.5 px-4 text-center">
+                        {video.status === 'ready' && video.hls_url ? (
+                          <span
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-[10px] font-extrabold"
+                            title={video.hls_url}
+                          >
+                            <Layers className="w-3 h-3" />
+                            Ready
+                          </span>
+                        ) : video.status === 'processing' ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-400 border border-amber-500/30 text-[10px] font-extrabold animate-pulse">
+                            <RefreshCw className="w-3 h-3 animate-spin" />
+                            Processing
+                          </span>
+                        ) : video.status === 'failed' ? (
+                          <span
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-red-600/20 text-red-400 border border-red-600/30 text-[10px] font-extrabold"
+                            title={video.status_error || 'Transcode failed - still serving from direct_url'}
+                          >
+                            <AlertTriangle className="w-3 h-3" />
+                            Failed
+                          </span>
+                        ) : (
+                          <span
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-zinc-700/40 text-zinc-400 border border-zinc-700 text-[10px] font-extrabold"
+                            title="Not yet picked up by the transcode pipeline - still serving from direct_url"
+                          >
+                            Legacy
+                          </span>
+                        )}
+                      </td>
+
+                      {/* Stream Health */}
+                      <td className="py-3.5 px-4 text-center">
+                        {healthMap[video.id] === 'checking' ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-400 border border-amber-500/30 text-[10px] font-extrabold animate-pulse">
+                            <RefreshCw className="w-3 h-3 animate-spin" />
+                            Testing...
+                          </span>
+                        ) : healthMap[video.id] === 'healthy' ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-[10px] font-extrabold">
+                            <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                            Healthy
+                          </span>
+                        ) : healthMap[video.id] === 'broken' ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-red-600/20 text-red-400 border border-red-600/30 text-[10px] font-extrabold">
+                            <ShieldAlert className="w-3 h-3 text-red-400" />
+                            Broken Link
+                          </span>
+                        ) : (
+                          <button
+                            onClick={async () => {
+                              setHealthMap((prev) => ({ ...prev, [video.id]: 'checking' }));
+                              const res = await verifyVideoLink(video.direct_url, 4000);
+                              setHealthMap((prev) => ({ ...prev, [video.id]: res.status }));
+                            }}
+                            className="px-2 py-0.5 rounded-md bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-white text-[10px] font-extrabold border border-zinc-700 transition-all"
+                            title="Click to check link health"
+                          >
+                            Verify Link
+                          </button>
+                        )}
+                      </td>
+
+                      {/* Views */}
+                      <td className="py-3.5 px-4 text-center font-mono font-bold text-xs text-blue-500">
+                        <span className="inline-flex items-center gap-1">
+                          <Eye className="w-3.5 h-3.5" />
+                          {getVideoViewCount(video).toLocaleString()}
+                        </span>
+                      </td>
+
+                      {/* Actions */}
+                      <td className="py-3.5 px-4 text-right">
+                        <div className="flex items-center justify-end gap-1.5">
+                          {/* Test Play Button */}
                           <button
                             onClick={() => handleTestPlayVideo(video)}
-                            className="flex-1 py-1.5 px-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-white font-extrabold flex items-center justify-center gap-1 text-[11px] transition-all"
+                            title="Test Play Stream"
+                            className="px-2.5 py-1 rounded-lg bg-red-600 hover:bg-red-700 text-white font-extrabold flex items-center gap-1 shadow-sm transition-all active:scale-95 text-[11px]"
                           >
-                            <Play className="w-3 h-3 fill-white" />
-                            <span>Fullscreen</span>
+                            <Play className="w-3.5 h-3.5 fill-white" />
+                            <span>Test Play</span>
                           </button>
 
-                          <button
-                            onClick={() => onDeleteVideo(video.id)}
-                            className="py-1.5 px-2.5 rounded-lg bg-red-600/20 hover:bg-red-600 text-red-400 hover:text-white border border-red-500/30 text-[11px] font-black flex items-center justify-center gap-1 transition-all"
-                            title="Delete this video"
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                            <span>Delete</span>
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        ) : (
-          /* TABLE VIEW */
-          <div className="overflow-x-auto">
-            <table className="w-full text-left border-collapse text-xs">
-              <thead>
-                <tr
-                  className={`border-b text-[11px] font-black uppercase tracking-wider ${
-                    isDark
-                      ? 'bg-zinc-950 border-zinc-800 text-zinc-400'
-                      : 'bg-zinc-100 border-zinc-200 text-zinc-600'
-                  }`}
-                >
-                  <th className="py-3.5 px-3 w-10 text-center">
-                    <input
-                      type="checkbox"
-                      checked={selectedIds.length === filteredVideos.length && filteredVideos.length > 0}
-                      onChange={handleSelectAll}
-                      className="rounded border-zinc-700 text-red-600 focus:ring-red-600 bg-zinc-900 cursor-pointer"
-                      title="Select / Deselect All"
-                    />
-                  </th>
-                  {isPreviewEnabled && (
-                    <th className="py-3.5 px-4 text-center min-w-[170px]">Live Stream Preview</th>
-                  )}
-                  <th className="py-3.5 px-4">Firestore Doc ID</th>
-                  <th className="py-3.5 px-4">Direct Stream URL</th>
-                  <th className="py-3.5 px-4 text-center">Status</th>
-                  <th className="py-3.5 px-4 text-center">Approval</th>
-                  <th className="py-3.5 px-4 text-center">HLS / ABR</th>
-                  <th className="py-3.5 px-4 text-center">Stream Health</th>
-                  <th className="py-3.5 px-4 text-center">Views</th>
-                  <th className="py-3.5 px-4 text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody className={`divide-y ${isDark ? 'divide-zinc-800/60' : 'divide-zinc-100'}`}>
-                {filteredVideos.length === 0 ? (
-                  <tr>
-                    <td colSpan={isPreviewEnabled ? 10 : 9} className={`py-12 text-center ${isDark ? 'text-zinc-500' : 'text-zinc-400'}`}>
-                      <Film className="w-8 h-8 mx-auto mb-2 text-zinc-600 opacity-60" />
-                      <p className="font-bold text-sm">No videos found.</p>
-                      <p className="text-xs mt-1">Add direct stream links using the form above or adjust your search filters.</p>
-                    </td>
-                  </tr>
-                ) : (
-                  filteredVideos.map((video) => {
-                    const isSelected = selectedIds.includes(video.id);
-                    const isApproved = video.is_approved === true || video.approved === true;
-
-                    return (
-                      <tr
-                        key={video.id}
-                        className={`transition-colors ${
-                          isSelected
-                            ? isDark
-                              ? 'bg-red-950/20'
-                              : 'bg-red-50/50'
-                            : isDark
-                            ? 'hover:bg-zinc-800/50'
-                            : 'hover:bg-zinc-50'
-                        }`}
-                      >
-                        {/* Checkbox */}
-                        <td className="py-3.5 px-3 text-center align-middle">
-                          <input
-                            type="checkbox"
-                            checked={isSelected}
-                            onChange={() => handleToggleSelect(video.id)}
-                            className="rounded border-zinc-700 text-red-600 focus:ring-red-600 bg-zinc-900 cursor-pointer"
-                          />
-                        </td>
-
-                        {/* Live Mini Preview Player (Viewport-Aware RAM Saver) */}
-                        {isPreviewEnabled && (
-                          <td className="py-2.5 px-4 w-44 min-w-[170px] align-middle">
-                            <LazyVideoPreviewPlayer
-                              video={video}
-                              onDelete={onDeleteVideo}
-                              onExpand={handleTestPlayVideo}
-                              isDark={isDark}
-                              aspectRatio="video"
-                            />
-                          </td>
-                        )}
-
-                        {/* Firestore Doc ID */}
-                        <td className="py-3.5 px-4 font-mono font-bold text-red-500 align-middle">
-                          <div className="flex items-center gap-1.5">
-                            <span className="truncate max-w-[120px]" title={video.id}>
-                              {video.id}
-                            </span>
-                            <button
-                              onClick={() => handleCopy(video.id, `id-${video.id}`)}
-                              className="p-1 rounded hover:bg-zinc-800 text-zinc-400 hover:text-white"
-                              title="Copy ID"
-                            >
-                              {copiedId === `id-${video.id}` ? (
-                                <Check className="w-3 h-3 text-emerald-500" />
-                              ) : (
-                                <Copy className="w-3 h-3" />
-                              )}
-                            </button>
-                          </div>
-                        </td>
-
-                        {/* Direct Stream URL */}
-                        <td className="py-3.5 px-4 max-w-md truncate font-mono text-[11px] align-middle">
-                          <div className="flex items-center gap-1.5">
-                            <span className={`truncate ${isDark ? 'text-zinc-200' : 'text-zinc-800'}`} title={video.direct_url}>
-                              {video.direct_url}
-                            </span>
-                            <button
-                              onClick={() => handleCopy(video.direct_url, `url-${video.id}`)}
-                              className="p-1 rounded hover:bg-zinc-800 text-zinc-400 hover:text-white flex-shrink-0"
-                              title="Copy Direct URL"
-                            >
-                              {copiedId === `url-${video.id}` ? (
-                                <Check className="w-3 h-3 text-emerald-500" />
-                              ) : (
-                                <Copy className="w-3 h-3" />
-                              )}
-                            </button>
-                          </div>
-                        </td>
-
-                        {/* Status Toggle Badge */}
-                        <td className="py-3.5 px-4 text-center align-middle">
+                          {/* Toggle Status Button */}
                           <button
                             onClick={() => onToggleVideoStatus(video.id, video.is_active)}
-                            className="transition-transform active:scale-95"
-                            title="Click to toggle active status"
+                            title={video.is_active ? 'Deactivate Video' : 'Activate Video'}
+                            className={`p-1.5 rounded-lg transition-all ${
+                              video.is_active
+                                ? 'bg-emerald-950/40 text-emerald-400 border border-emerald-900/40 hover:bg-emerald-900/60'
+                                : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'
+                            }`}
                           >
-                            {video.is_active ? (
-                              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-emerald-600 text-white shadow-sm hover:bg-emerald-500">
-                                <span className="w-1.5 h-1.5 rounded-full bg-white animate-pulse" />
-                                Active
-                              </span>
-                            ) : (
-                              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-zinc-700 text-zinc-300 hover:bg-zinc-600">
-                                <span className="w-1.5 h-1.5 rounded-full bg-zinc-400" />
-                                Inactive
-                              </span>
-                            )}
+                            {video.is_active ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5 text-emerald-500" />}
                           </button>
-                        </td>
 
-                        {/* Approval Status Badge */}
-                        <td className="py-3.5 px-4 text-center align-middle">
+                          {/* Delete Button */}
                           <button
-                            onClick={() =>
-                              onToggleApproval && onToggleApproval(video.id, isApproved)
-                            }
-                            className="transition-transform active:scale-95"
-                            title="Click to toggle approval status"
+                            onClick={() => onDeleteVideo(video.id)}
+                            title="Delete Video"
+                            className="p-1.5 rounded-lg bg-red-950/40 text-red-500 hover:bg-red-900/60 border border-red-900/40 transition-all"
                           >
-                            {isApproved ? (
-                              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-emerald-600/20 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-600 hover:text-white transition-all shadow-sm">
-                                <CheckCircle2 className="w-3 h-3 text-emerald-400" />
-                                Approved
-                              </span>
-                            ) : (
-                              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-amber-500/20 text-amber-400 border border-amber-500/30 hover:bg-amber-600 hover:text-white transition-all">
-                                <AlertCircle className="w-3 h-3 text-amber-400" />
-                                Not Approved
-                              </span>
-                            )}
+                            <Trash2 className="w-3.5 h-3.5" />
                           </button>
-                        </td>
-
-                        {/* HLS / ABR Transcode Status */}
-                        <td className="py-3.5 px-4 text-center align-middle">
-                          {video.status === 'ready' && video.hls_url ? (
-                            <span
-                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-[10px] font-extrabold"
-                              title={video.hls_url}
-                            >
-                              <Layers className="w-3 h-3" />
-                              Ready
-                            </span>
-                          ) : video.status === 'processing' ? (
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-400 border border-amber-500/30 text-[10px] font-extrabold animate-pulse">
-                              <RefreshCw className="w-3 h-3 animate-spin" />
-                              Processing
-                            </span>
-                          ) : video.status === 'failed' ? (
-                            <span
-                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-red-600/20 text-red-400 border border-red-600/30 text-[10px] font-extrabold"
-                              title={video.status_error || 'Transcode failed - still serving from direct_url'}
-                            >
-                              <AlertTriangle className="w-3 h-3" />
-                              Failed
-                            </span>
-                          ) : (
-                            <span
-                              className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-zinc-700/40 text-zinc-400 border border-zinc-700 text-[10px] font-extrabold"
-                              title="Not yet picked up by the transcode pipeline - still serving from direct_url"
-                            >
-                              Legacy
-                            </span>
-                          )}
-                        </td>
-
-                        {/* Stream Health */}
-                        <td className="py-3.5 px-4 text-center align-middle">
-                          {healthMap[video.id] === 'checking' ? (
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-400 border border-amber-500/30 text-[10px] font-extrabold animate-pulse">
-                              <RefreshCw className="w-3 h-3 animate-spin" />
-                              Testing...
-                            </span>
-                          ) : healthMap[video.id] === 'healthy' ? (
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-[10px] font-extrabold">
-                              <CheckCircle2 className="w-3 h-3 text-emerald-400" />
-                              Healthy
-                            </span>
-                          ) : healthMap[video.id] === 'broken' ? (
-                            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-red-600/20 text-red-400 border border-red-600/30 text-[10px] font-extrabold">
-                              <ShieldAlert className="w-3 h-3 text-red-400" />
-                              Broken Link
-                            </span>
-                          ) : (
-                            <button
-                              onClick={async () => {
-                                setHealthMap((prev) => ({ ...prev, [video.id]: 'checking' }));
-                                const res = await verifyVideoLink(video.direct_url, 4000);
-                                setHealthMap((prev) => ({ ...prev, [video.id]: res.status }));
-                              }}
-                              className="px-2 py-0.5 rounded-md bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-white text-[10px] font-extrabold border border-zinc-700 transition-all"
-                              title="Click to check link health"
-                            >
-                              Verify Link
-                            </button>
-                          )}
-                        </td>
-
-                        {/* Views */}
-                        <td className="py-3.5 px-4 text-center font-mono font-bold text-xs text-blue-500 align-middle">
-                          <span className="inline-flex items-center gap-1">
-                            <Eye className="w-3.5 h-3.5" />
-                            {getVideoViewCount(video).toLocaleString()}
-                          </span>
-                        </td>
-
-                        {/* Actions */}
-                        <td className="py-3.5 px-4 text-right align-middle">
-                          <div className="flex items-center justify-end gap-1.5">
-                            {/* Test Play Button */}
-                            <button
-                              onClick={() => handleTestPlayVideo(video)}
-                              title="Test Play Stream"
-                              className="px-2.5 py-1 rounded-lg bg-red-600 hover:bg-red-700 text-white font-extrabold flex items-center gap-1 shadow-sm transition-all active:scale-95 text-[11px]"
-                            >
-                              <Play className="w-3.5 h-3.5 fill-white" />
-                              <span>Test Play</span>
-                            </button>
-
-                            {/* Toggle Status Button */}
-                            <button
-                              onClick={() => onToggleVideoStatus(video.id, video.is_active)}
-                              title={video.is_active ? 'Deactivate Video' : 'Activate Video'}
-                              className={`p-1.5 rounded-lg transition-all ${
-                                video.is_active
-                                  ? 'bg-emerald-950/40 text-emerald-400 border border-emerald-900/40 hover:bg-emerald-900/60'
-                                  : 'bg-zinc-800 text-zinc-400 hover:bg-zinc-700'
-                              }`}
-                            >
-                              {video.is_active ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5 text-emerald-500" />}
-                            </button>
-
-                            {/* Delete Button */}
-                            <button
-                              onClick={() => onDeleteVideo(video.id)}
-                              title="Delete Video"
-                              className="p-1.5 rounded-lg bg-red-950/40 text-red-500 hover:bg-red-900/60 border border-red-900/40 transition-all"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
-          </div>
-        )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       {/* 4. TEST PLAY VIDEO PREVIEW MODAL */}

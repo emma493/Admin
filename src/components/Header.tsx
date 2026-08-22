@@ -3,7 +3,7 @@ import { Sun, Moon, Menu, X } from 'lucide-react';
 import { ThemeMode } from '../types';
 
 interface HeaderProps {
-  activeTab: 'videos' | 'test';
+  activeTab: 'videos';
   theme: ThemeMode;
   onToggleTheme: () => void;
   firestoreConnected: boolean;
@@ -12,7 +12,6 @@ interface HeaderProps {
 }
 
 export const Header: React.FC<HeaderProps> = ({
-  activeTab,
   theme,
   onToggleTheme,
   firestoreConnected,
@@ -49,7 +48,7 @@ export const Header: React.FC<HeaderProps> = ({
         <div>
           <div className="flex items-center gap-2">
             <h1 className="text-lg sm:text-xl font-black tracking-tight capitalize">
-              {activeTab === 'test' ? 'Video Quality Test & Approval' : 'Videos Manager'}
+              Videos Manager
             </h1>
             <span
               className={`px-2 py-0.5 text-[10px] font-black rounded-full uppercase tracking-wider flex items-center gap-1 ${
@@ -61,9 +60,7 @@ export const Header: React.FC<HeaderProps> = ({
             </span>
           </div>
           <p className={`text-xs ${isDark ? 'text-zinc-400' : 'text-zinc-500'} hidden sm:block`}>
-            {activeTab === 'test'
-              ? 'Fast lag-free batch review: only visible frames stream. Approve valid streams or delete unexpected links.'
-              : 'Manage video stream links, approval status, active toggle, and view counters'}
+            Manage video stream links, active status, and views count
           </p>
         </div>
       </div>

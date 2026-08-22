@@ -339,8 +339,6 @@ export function subscribeToVideos(
           source_webpage: data.source_webpage || data.page_url || '',
           direct_url: data.direct_url || '',
           is_active: typeof data.is_active === 'boolean' ? data.is_active : true,
-          is_approved: data.is_approved === true || data.approved === true,
-          approved: data.is_approved === true || data.approved === true,
           created_at: data.created_at || new Date(),
           views: typeof data.views === 'number' ? data.views : 0,
           // Populated by the transcodeVideo Cloud Function; undefined on
@@ -516,57 +514,6 @@ export async function toggleVideoStatus(id: string, currentIsActive: boolean): P
     await updateDoc(docRef, { is_active: !currentIsActive });
   } catch (err) {
     handleFirestoreError(err, OperationType.UPDATE, `${VIDEOS_COLLECTION}/${id}`);
-    throw err;
-  }
-}
-
-/**
- * Set video approval status
- */
-export async function setVideoApproval(id: string, isApproved: boolean): Promise<void> {
-  try {
-    const docRef = doc(db, VIDEOS_COLLECTION, id);
-    await updateDoc(docRef, {
-      is_approved: isApproved,
-      approved: isApproved,
-    });
-  } catch (err) {
-    handleFirestoreError(err, OperationType.UPDATE, `${VIDEOS_COLLECTION}/${id}`);
-    throw err;
-  }
-}
-
-/**
- * Toggle video approval status
- */
-export async function toggleVideoApproval(id: string, currentIsApproved: boolean): Promise<void> {
-  return setVideoApproval(id, !currentIsApproved);
-}
-
-/**
- * Set approval status for multiple videos in batch
- */
-export async function setVideoApprovalBatch(ids: string[], isApproved: boolean): Promise<number> {
-  if (!ids || ids.length === 0) return 0;
-  try {
-    const CHUNK_SIZE = 400;
-    let count = 0;
-    for (let i = 0; i < ids.length; i += CHUNK_SIZE) {
-      const chunk = ids.slice(i, i + CHUNK_SIZE);
-      const batch = writeBatch(db);
-      for (const id of chunk) {
-        const docRef = doc(db, VIDEOS_COLLECTION, id);
-        batch.update(docRef, {
-          is_approved: isApproved,
-          approved: isApproved,
-        });
-      }
-      await batch.commit();
-      count += chunk.length;
-    }
-    return count;
-  } catch (err) {
-    handleFirestoreError(err, OperationType.UPDATE, VIDEOS_COLLECTION);
     throw err;
   }
 }

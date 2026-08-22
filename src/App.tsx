@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   subscribeToVideos,
   subscribeToTotalViews,
@@ -11,8 +11,6 @@ import {
   saveVideoDoc,
   deleteVideoDoc,
   toggleVideoStatus,
-  toggleVideoApproval,
-  setVideoApprovalBatch,
   subscribeToEvents,
   incrementVideoViews,
   logTelemetryEvent,
@@ -25,11 +23,10 @@ import {
 import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
 import { VideosTab } from './components/VideosTab';
-import { TestTab } from './components/TestTab';
 import { MobileNav } from './components/MobileNav';
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<'videos' | 'test'>('videos');
+  const [activeTab, setActiveTab] = useState<'videos'>('videos');
   const [theme, setTheme] = useState<ThemeMode>('dark');
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState<boolean>(false);
@@ -40,10 +37,6 @@ export default function App() {
   const [totalViews, setTotalViews] = useState<number>(0);
   const [views24h, setViews24h] = useState<number>(0);
   const [firestoreConnected, setFirestoreConnected] = useState<boolean>(false);
-
-  const unapprovedCount = useMemo(() => {
-    return videos.filter((v) => v.is_approved !== true && v.approved !== true).length;
-  }, [videos]);
 
   const toggleTheme = () => {
     setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
@@ -127,7 +120,6 @@ export default function App() {
       <Sidebar
         activeTab={activeTab}
         setActiveTab={setActiveTab}
-        unapprovedCount={unapprovedCount}
         firestoreConnected={firestoreConnected}
         isCollapsed={isSidebarCollapsed}
         onToggleCollapse={toggleSidebar}
@@ -147,46 +139,24 @@ export default function App() {
           isMobileMenuOpen={isMobileMenuOpen}
         />
 
-        {/* CONTAINER BODY */}
+        {/* CONTAINER BODY - Strictly Videos Management */}
         <main className="flex-1 p-3.5 sm:p-6 lg:p-8 pb-24 lg:pb-8 space-y-6 max-w-7xl w-full mx-auto">
-          {activeTab === 'test' ? (
-            <TestTab
-              videos={videos}
-              onDeleteVideo={async (id) => {
-                await deleteVideoDoc(id);
-              }}
-              onToggleApproval={async (id, currentIsApproved) => {
-                await toggleVideoApproval(id, currentIsApproved);
-              }}
-              onBatchApprove={async (ids) => {
-                await setVideoApprovalBatch(ids, true);
-              }}
-              theme={theme}
-            />
-          ) : (
-            <VideosTab
-              videos={videos}
-              events={events}
-              realtimeTotalViews={totalViews}
-              realtimeViews24h={views24h}
-              onSaveVideo={async (data) => {
-                await saveVideoDoc(data);
-              }}
-              onDeleteVideo={async (id) => {
-                await deleteVideoDoc(id);
-              }}
-              onToggleVideoStatus={async (id, currentIsActive) => {
-                await toggleVideoStatus(id, currentIsActive);
-              }}
-              onToggleApproval={async (id, currentIsApproved) => {
-                await toggleVideoApproval(id, currentIsApproved);
-              }}
-              onBatchApprove={async (ids, isApproved) => {
-                await setVideoApprovalBatch(ids, isApproved);
-              }}
-              theme={theme}
-            />
-          )}
+          <VideosTab
+            videos={videos}
+            events={events}
+            realtimeTotalViews={totalViews}
+            realtimeViews24h={views24h}
+            onSaveVideo={async (data) => {
+              await saveVideoDoc(data);
+            }}
+            onDeleteVideo={async (id) => {
+              await deleteVideoDoc(id);
+            }}
+            onToggleVideoStatus={async (id, currentIsActive) => {
+              await toggleVideoStatus(id, currentIsActive);
+            }}
+            theme={theme}
+          />
         </main>
       </div>
 
@@ -194,7 +164,6 @@ export default function App() {
       <MobileNav
         activeTab={activeTab}
         setActiveTab={setActiveTab}
-        unapprovedCount={unapprovedCount}
         theme={theme}
       />
     </div>

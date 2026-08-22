@@ -31,8 +31,6 @@ export interface VideoDocument {
   source_webpage?: string;
   direct_url: string;
   is_active: boolean;
-  is_approved?: boolean; // Video moderation/approval status (true = approved, false/undefined = not approved)
-  approved?: boolean;
   created_at: Timestamp | Date | number | any;
   views: number;
   // Adaptive HLS pipeline fields (written by the transcodeVideo Cloud Function,
@@ -142,5 +140,3 @@ export interface DateRangeState {
   startDate: string; // YYYY-MM-DD or empty
   endDate: string;   // YYYY-MM-DD or empty
 }
-
-export type ActiveTab = 'overview' | 'traffic' | 'videos' | 'test' | 'notifications' | 'analytics';
