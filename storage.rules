@@ -1,0 +1,21 @@
+rules_version = '2';
+
+// Only the generated HLS output (written by the transcodeVideo Cloud
+// Function via the Admin SDK, which bypasses these rules entirely) is ever
+// stored here - the admin dashboard never uploads raw files, it only saves
+// a direct_url. Public read on hls/** is what lets Cloudflare Pages (and
+// any HLS player, hls.js included) fetch master.m3u8/variant
+// playlists/segments/poster with a plain HTTPS GET, no auth token needed -
+// content here is meant to be public, same as direct_url already is.
+service firebase.storage {
+  match /b/{bucket}/o {
+    match /hls/{videoId}/{allPaths=**} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}
