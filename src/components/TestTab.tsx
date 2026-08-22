@@ -116,13 +116,11 @@ const TestVideoCard: React.FC<{
 
   const handleDelete = async () => {
     if (isDeleting) return;
-    if (window.confirm(`Delete video permanently?\n\nID: ${video.id}\nURL: ${video.direct_url}`)) {
-      setIsDeleting(true);
-      try {
-        await onDelete(video.id);
-      } finally {
-        setIsDeleting(false);
-      }
+    setIsDeleting(true);
+    try {
+      await onDelete(video.id);
+    } finally {
+      setIsDeleting(false);
     }
   };
 
