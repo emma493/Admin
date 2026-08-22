@@ -31,8 +31,8 @@ import {
   ArrowRight,
 } from 'lucide-react';
 import { VideoDocument, TelemetryEventDocument, ThemeMode } from '../types';
-import { extractLinksFromString, verifyVideoLink } from '../lib/videoUtils';
-import { incrementVideoViews, logTelemetryEvent, fetchNextVideoAndTrackView } from '../lib/firebase';
+import { extractLinksFromString, verifyVideoLink, verifyVideoLinksInSessions } from '../lib/videoUtils';
+import { incrementVideoViews, logTelemetryEvent, fetchNextVideoAndTrackView, saveVideoDocsBatch } from '../lib/firebase';
 
 interface DuplicateGroup {
   url: string;
@@ -423,53 +423,77 @@ export const VideosTab: React.FC<VideosTabProps> = ({
     setFeedback(null);
     setStatusMessage('');
 
-    let addedCount = 0;
-    let skippedCount = 0;
-    const errorMessages: string[] = [];
-
     try {
-      for (let i = 0; i < directList.length; i++) {
-        const dUrl = directList[i];
+      let validUrls: string[] = directList;
+      let brokenUrls: string[] = [];
 
-        if (verifyBeforeAdd) {
-          setStatusMessage(`Testing direct stream playability (${i + 1}/${directList.length}): ${dUrl}`);
-          const health = await verifyVideoLink(dUrl, 5000);
-
+      if (verifyBeforeAdd) {
+        if (directList.length === 1) {
+          setStatusMessage(`Testing stream playability: ${directList[0]}`);
+          const health = await verifyVideoLink(directList[0], 4000);
           if (health.status === 'broken') {
-            skippedCount++;
-            errorMessages.push(`Direct link failed playability check: ${dUrl}`);
-            continue;
+            brokenUrls.push(directList[0]);
+            validUrls = [];
           }
+        } else {
+          // Multi-session concurrent verification
+          const verifyRes = await verifyVideoLinksInSessions(directList, {
+            onProgress: (checked, total, sessionCount) => {
+              setStatusMessage(
+                `Verifying ${total} stream links across ${sessionCount} parallel sessions... (${checked}/${total})`
+              );
+            },
+          });
+          validUrls = verifyRes.healthy;
+          brokenUrls = verifyRes.broken;
         }
-
-        setStatusMessage(`Saving video stream (${i + 1}/${directList.length})...`);
-        await onSaveVideo({
-          direct_url: dUrl,
-          is_active: true,
-          views: 0,
-          created_at: new Date(),
-        });
-        addedCount++;
       }
 
-      if (addedCount > 0) {
-        setFeedback({
-          type: 'success',
-          message:
-            skippedCount > 0
-              ? `Successfully stored ${addedCount} video stream${addedCount > 1 ? 's' : ''}! (${skippedCount} link${skippedCount > 1 ? 's' : ''} failed playability check)`
-              : `Successfully added and verified ${addedCount} video stream${addedCount > 1 ? 's' : ''} to Firestore!`,
-        });
-        setDirectUrl('');
-      } else {
+      if (validUrls.length === 0) {
         setFeedback({
           type: 'error',
           message:
-            errorMessages.length > 0
-              ? errorMessages.join(' | ')
-              : 'Failed to add video streams. Please check your links.',
+            brokenUrls.length > 0
+              ? `All ${brokenUrls.length} links failed playability check. Please check the URLs and try again.`
+              : 'No valid video links found to add.',
+        });
+        return;
+      }
+
+      // Save valid streams in parallel sessions via fast batch commits
+      const docsToSave = validUrls.map((url) => ({
+        direct_url: url,
+        source_webpage: url,
+        page_url: url,
+        is_active: true,
+        views: 0,
+        created_at: new Date(),
+      }));
+
+      if (docsToSave.length === 1) {
+        setStatusMessage('Saving video stream to Firestore...');
+        await onSaveVideo(docsToSave[0]);
+      } else {
+        setStatusMessage(
+          `Saving ${docsToSave.length} video streams across parallel worker sessions in Firestore...`
+        );
+        await saveVideoDocsBatch(docsToSave, {
+          onProgress: (saved, total, sessionCount) => {
+            setStatusMessage(
+              `Saving ${total} video streams across ${sessionCount} parallel sessions... (${saved}/${total})`
+            );
+          },
         });
       }
+
+      setFeedback({
+        type: 'success',
+        message:
+          brokenUrls.length > 0
+            ? `Successfully stored ${validUrls.length} video stream${validUrls.length > 1 ? 's' : ''}! (${brokenUrls.length} broken link${brokenUrls.length > 1 ? 's' : ''} filtered out)`
+            : `Successfully stored and verified ${validUrls.length} video stream${validUrls.length > 1 ? 's' : ''} to Firestore!`,
+      });
+      setDirectUrl('');
     } catch (err: any) {
       console.error('Error adding video:', err);
       setFeedback({

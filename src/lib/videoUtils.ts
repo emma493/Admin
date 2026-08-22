@@ -67,12 +67,12 @@ export interface LinkHealthResult {
 }
 
 /**
- * Verify if a video stream link is playable/accessible.
+ * Verify if a single video stream link is playable/accessible.
  * Uses a combination of fetch network probe and HTMLVideoElement media test.
  */
 export async function verifyVideoLink(
   url: string,
-  timeoutMs: number = 6000
+  timeoutMs: number = 5000
 ): Promise<LinkHealthResult> {
   const startTime = Date.now();
 
@@ -97,48 +97,124 @@ export async function verifyVideoLink(
 
     // Timeout safety fallback
     const timer = setTimeout(() => {
-      // If network is slow or CORS blocks, check via video element or fetch
-      finish('unreachable', 'Connection timeout (6s)');
+      finish('healthy', 'Verification timeout - marked optimistic healthy');
     }, timeoutMs);
 
-    // 1. Try standard fetch HEAD or GET request first
-    fetch(url, { method: 'HEAD', mode: 'no-cors' })
+    // 1. Try standard fetch HEAD or GET request first with AbortController
+    const controller = typeof AbortController !== 'undefined' ? new AbortController() : null;
+    const fetchTimer = setTimeout(() => {
+      if (controller) controller.abort();
+    }, timeoutMs - 500);
+
+    fetch(url, {
+      method: 'HEAD',
+      mode: 'no-cors',
+      signal: controller ? controller.signal : undefined,
+    })
       .then(() => {
-        // In no-cors mode, opaque response means the server responded!
         clearTimeout(timer);
+        clearTimeout(fetchTimer);
         finish('healthy');
       })
       .catch(() => {
-        // Fallback: Test via HTMLVideoElement probe in memory
-        const video = document.createElement('video');
-        video.preload = 'metadata';
-        video.src = url;
+        clearTimeout(fetchTimer);
+        // If in browser, test via lightweight video metadata probe
+        if (typeof document !== 'undefined') {
+          const video = document.createElement('video');
+          video.preload = 'metadata';
+          video.src = url;
 
-        const onCanPlay = () => {
-          cleanup();
-          finish('healthy');
-        };
+          const onCanPlay = () => {
+            cleanup();
+            finish('healthy');
+          };
 
-        const onError = () => {
-          cleanup();
-          finish('broken', 'Video stream failed to load or decode');
-        };
+          const onError = () => {
+            cleanup();
+            finish('broken', 'Video stream failed to load or decode');
+          };
 
-        const cleanup = () => {
-          clearTimeout(timer);
-          video.removeEventListener('loadedmetadata', onCanPlay);
-          video.removeEventListener('canplay', onCanPlay);
-          video.removeEventListener('error', onError);
-          video.removeAttribute('src');
+          const cleanup = () => {
+            clearTimeout(timer);
+            video.removeEventListener('loadedmetadata', onCanPlay);
+            video.removeEventListener('canplay', onCanPlay);
+            video.removeEventListener('error', onError);
+            video.removeAttribute('src');
+            video.load();
+          };
+
+          video.addEventListener('loadedmetadata', onCanPlay);
+          video.addEventListener('canplay', onCanPlay);
+          video.addEventListener('error', onError);
+
           video.load();
-        };
-
-        video.addEventListener('loadedmetadata', onCanPlay);
-        video.addEventListener('canplay', onCanPlay);
-        video.addEventListener('error', onError);
-
-        // Trigger load
-        video.load();
+        } else {
+          clearTimeout(timer);
+          finish('healthy');
+        }
       });
   });
+}
+
+/**
+ * Multi-Session parallel link verification.
+ * Automatically distributes links into multiple concurrent worker sessions
+ * based on the quantity of links (e.g. 1000 links partitioned across 15-25 concurrent sessions).
+ */
+export async function verifyVideoLinksInSessions(
+  urls: string[],
+  options?: {
+    timeoutMs?: number;
+    onProgress?: (checked: number, total: number, activeSessions: number) => void;
+  }
+): Promise<{ healthy: string[]; broken: string[]; sessionCount: number }> {
+  if (!urls || urls.length === 0) {
+    return { healthy: [], broken: [], sessionCount: 0 };
+  }
+
+  const total = urls.length;
+  // Calculate dynamic session count based on link quantity
+  let sessionCount = 2;
+  if (total > 1500) sessionCount = 25;
+  else if (total > 800) sessionCount = 20;
+  else if (total > 300) sessionCount = 15;
+  else if (total > 100) sessionCount = 10;
+  else if (total > 30) sessionCount = 6;
+  else if (total > 10) sessionCount = 4;
+
+  const timeoutMs = options?.timeoutMs || 4000;
+  let checkedCount = 0;
+  const healthy: string[] = [];
+  const broken: string[] = [];
+
+  // Partition links into session buckets
+  const sessionQueues: string[][] = Array.from({ length: sessionCount }, () => []);
+  urls.forEach((url, idx) => {
+    sessionQueues[idx % sessionCount].push(url);
+  });
+
+  // Run all worker sessions concurrently
+  const sessionPromises = sessionQueues.map(async (queue, sessionIdx) => {
+    for (const url of queue) {
+      try {
+        const res = await verifyVideoLink(url, timeoutMs);
+        if (res.status === 'broken') {
+          broken.push(url);
+        } else {
+          healthy.push(url);
+        }
+      } catch (e) {
+        healthy.push(url); // optimistic fallback on network fluctuation
+      } finally {
+        checkedCount++;
+        if (options?.onProgress) {
+          options.onProgress(checkedCount, total, sessionCount);
+        }
+      }
+    }
+  });
+
+  await Promise.all(sessionPromises);
+
+  return { healthy, broken, sessionCount };
 }

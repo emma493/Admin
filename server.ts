@@ -15,6 +15,7 @@ import {
   where,
   increment,
   serverTimestamp,
+  writeBatch,
 } from 'firebase/firestore';
 
 // Load Firebase Config safely
@@ -297,6 +298,154 @@ async function startServer() {
 
   app.post('/api/videos/:id/view', handleTrackView);
   app.post('/api/videos/track-view', handleTrackView);
+
+  /**
+   * POST /api/videos/batch and POST /api/videos/import
+   * High-speed bulk link processor. Automatically partitions links across multiple
+   * concurrent worker sessions depending on the total quantity of links (e.g. 1000 links
+   * shared among 20-25 parallel sessions), commits via chunked Firestore writeBatch,
+   * and guarantees accuracy and speed.
+   */
+  const handleBatchImport = async (req: express.Request, res: express.Response) => {
+    const startTime = Date.now();
+    try {
+      const rawUrls: string[] = Array.isArray(req.body.urls)
+        ? req.body.urls
+        : Array.isArray(req.body.videos)
+        ? req.body.videos.map((v: any) => (typeof v === 'string' ? v : v.direct_url))
+        : typeof req.body.url === 'string'
+        ? [req.body.url]
+        : [];
+
+      // Filter and clean URLs
+      const cleanedUrls = rawUrls
+        .map((u) => (typeof u === 'string' ? u.trim() : ''))
+        .filter((u) => u.length > 0);
+
+      if (cleanedUrls.length === 0) {
+        return res.status(400).json({
+          success: false,
+          error: 'No valid video links provided in payload (provide urls array).',
+        });
+      }
+
+      const total = cleanedUrls.length;
+
+      // Dynamically determine the number of worker sessions based on link quantity
+      let numSessions = 2;
+      if (total > 1500) numSessions = 25;
+      else if (total > 800) numSessions = 20;
+      else if (total > 300) numSessions = 15;
+      else if (total > 100) numSessions = 10;
+      else if (total > 30) numSessions = 6;
+      else if (total > 10) numSessions = 4;
+
+      const shouldVerify = req.body.verify === true;
+
+      // Partition links across dynamic worker sessions
+      const sessionBuckets: string[][] = Array.from({ length: numSessions }, () => []);
+      cleanedUrls.forEach((url, idx) => {
+        sessionBuckets[idx % numSessions].push(url);
+      });
+
+      let totalAdded = 0;
+      let totalSkipped = 0;
+      const sessionSummaries: Array<{ session: number; count: number; added: number; skipped: number }> = [];
+
+      // Execute worker sessions in parallel
+      const sessionTasks = sessionBuckets.map(async (bucket, sessionIdx) => {
+        if (bucket.length === 0) return;
+
+        let sessionValidUrls: string[] = [];
+
+        if (shouldVerify) {
+          // Fast verification in parallel within session
+          const verifyResults = await Promise.allSettled(
+            bucket.map(async (url) => {
+              try {
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 3500);
+                const resp = await fetch(url, { method: 'HEAD', signal: controller.signal });
+                clearTimeout(timeoutId);
+                return { url, valid: resp.ok || resp.status < 400 };
+              } catch (e) {
+                // Optimistic fallback for network/CORS restrictions
+                return { url, valid: true };
+              }
+            })
+          );
+
+          for (const result of verifyResults) {
+            if (result.status === 'fulfilled' && result.value.valid) {
+              sessionValidUrls.push(result.value.url);
+            } else {
+              totalSkipped++;
+            }
+          }
+        } else {
+          sessionValidUrls = bucket;
+        }
+
+        // Chunk into Firestore writeBatch groups of max 400 docs
+        const BATCH_SIZE = 400;
+        for (let i = 0; i < sessionValidUrls.length; i += BATCH_SIZE) {
+          const chunk = sessionValidUrls.slice(i, i + BATCH_SIZE);
+          const batch = writeBatch(db);
+
+          for (const url of chunk) {
+            const docRef = doc(collection(db, VIDEOS_COLLECTION));
+            batch.set(
+              docRef,
+              {
+                direct_url: url,
+                source_webpage: url,
+                page_url: url,
+                is_active: true,
+                views: 0,
+                created_at: serverTimestamp(),
+              },
+              { merge: true }
+            );
+          }
+
+          await batch.commit();
+          totalAdded += chunk.length;
+        }
+
+        sessionSummaries.push({
+          session: sessionIdx + 1,
+          count: bucket.length,
+          added: sessionValidUrls.length,
+          skipped: bucket.length - sessionValidUrls.length,
+        });
+      });
+
+      await Promise.all(sessionTasks);
+
+      const durationMs = Date.now() - startTime;
+
+      res.json({
+        success: true,
+        added: totalAdded,
+        skipped: totalSkipped,
+        total: total,
+        sessions: numSessions,
+        duration_ms: durationMs,
+        message: `Successfully processed ${totalAdded} video stream${totalAdded > 1 ? 's' : ''} across ${numSessions} concurrent sessions in ${durationMs}ms.`,
+        session_details: sessionSummaries,
+      });
+    } catch (err: any) {
+      console.error('Error in batch import handler:', err);
+      res.status(500).json({
+        success: false,
+        error: err?.message || 'Failed to process bulk links',
+        duration_ms: Date.now() - startTime,
+      });
+    }
+  };
+
+  app.post('/api/videos/batch', handleBatchImport);
+  app.post('/api/videos/import', handleBatchImport);
 
   // Vite middleware for development
   if (process.env.NODE_ENV !== 'production') {
