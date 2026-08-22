@@ -52,6 +52,8 @@ interface VideosTabProps {
   onSaveVideo: (data: Omit<VideoDocument, 'id'> & { id?: string }) => Promise<void>;
   onDeleteVideo: (id: string) => Promise<void>;
   onToggleVideoStatus: (id: string, currentIsActive: boolean) => Promise<void>;
+  onToggleApproval?: (id: string, currentIsApproved: boolean) => Promise<void>;
+  onBatchApprove?: (ids: string[], isApproved: boolean) => Promise<void>;
   theme: ThemeMode;
 }
 
@@ -63,6 +65,8 @@ export const VideosTab: React.FC<VideosTabProps> = ({
   onSaveVideo,
   onDeleteVideo,
   onToggleVideoStatus,
+  onToggleApproval,
+  onBatchApprove,
   theme,
 }) => {
   const isDark = theme === 'dark';
@@ -77,10 +81,12 @@ export const VideosTab: React.FC<VideosTabProps> = ({
   // Search & Filter State
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [statusFilter, setStatusFilter] = useState<'All' | 'Active' | 'Inactive'>('All');
+  const [approvalFilter, setApprovalFilter] = useState<'All' | 'Approved' | 'NotApproved'>('All');
 
-  // Table Row Selection for Bulk Operations (Copy, Delete, Toggle)
+  // Table Row Selection for Bulk Operations (Copy, Delete, Toggle, Approve)
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [isDeletingBatch, setIsDeletingBatch] = useState<boolean>(false);
+  const [isApprovingBatch, setIsApprovingBatch] = useState<boolean>(false);
 
   // Video Health Checking State
   const [healthMap, setHealthMap] = useState<Record<string, 'healthy' | 'broken' | 'checking'>>({});
@@ -189,13 +195,20 @@ export const VideosTab: React.FC<VideosTabProps> = ({
       video.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
       video.direct_url.toLowerCase().includes(searchQuery.toLowerCase());
 
-    // Filter by status
+    // Filter by active status
     const matchesStatus =
       statusFilter === 'All' ||
       (statusFilter === 'Active' && video.is_active) ||
       (statusFilter === 'Inactive' && !video.is_active);
 
-    return matchesSearch && matchesStatus;
+    // Filter by approval status
+    const isApproved = video.is_approved === true || video.approved === true;
+    const matchesApproval =
+      approvalFilter === 'All' ||
+      (approvalFilter === 'Approved' && isApproved) ||
+      (approvalFilter === 'NotApproved' && !isApproved);
+
+    return matchesSearch && matchesStatus && matchesApproval;
   });
 
   // Health Inspection & Auto-Purging function
@@ -329,6 +342,29 @@ export const VideosTab: React.FC<VideosTabProps> = ({
       });
     } finally {
       setIsDeletingBatch(false);
+    }
+  };
+
+  // Bulk approve / unapprove selected videos
+  const handleBatchApprovalToggle = async (approve: boolean) => {
+    if (selectedIds.length === 0 || !onBatchApprove) return;
+    setIsApprovingBatch(true);
+    try {
+      await onBatchApprove(selectedIds, approve);
+      setFeedback({
+        type: 'success',
+        message: `Successfully marked ${selectedIds.length} video${selectedIds.length > 1 ? 's' : ''} as ${
+          approve ? 'Approved' : 'Not Approved'
+        }!`,
+      });
+      setSelectedIds([]);
+    } catch (err: any) {
+      setFeedback({
+        type: 'error',
+        message: `Failed to update approval status: ${err?.message || 'Error'}`,
+      });
+    } finally {
+      setIsApprovingBatch(false);
     }
   };
 
@@ -864,7 +900,7 @@ export const VideosTab: React.FC<VideosTabProps> = ({
 
           <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
             {/* Search Input */}
-            <div className="relative min-w-[220px]">
+            <div className="relative min-w-[200px]">
               <Search className="w-4 h-4 text-zinc-400 absolute left-3 top-1/2 -translate-y-1/2" />
               <input
                 type="text"
@@ -886,12 +922,12 @@ export const VideosTab: React.FC<VideosTabProps> = ({
             </div>
 
             {/* Status Filter */}
-            <div className="flex items-center gap-1.5 p-1 rounded-xl border bg-zinc-950 border-zinc-800 text-xs">
+            <div className="flex items-center gap-1 p-1 rounded-xl border bg-zinc-950 border-zinc-800 text-xs">
               {(['All', 'Active', 'Inactive'] as const).map((filterOpt) => (
                 <button
                   key={filterOpt}
                   onClick={() => setStatusFilter(filterOpt)}
-                  className={`px-3 py-1 rounded-lg font-extrabold transition-all ${
+                  className={`px-2.5 py-1 rounded-lg font-extrabold transition-all ${
                     statusFilter === filterOpt
                       ? 'bg-red-600 text-white'
                       : 'text-zinc-400 hover:text-white'
@@ -900,6 +936,42 @@ export const VideosTab: React.FC<VideosTabProps> = ({
                   {filterOpt}
                 </button>
               ))}
+            </div>
+
+            {/* Approval Filter */}
+            <div className="flex items-center gap-1 p-1 rounded-xl border bg-zinc-950 border-zinc-800 text-xs">
+              <button
+                onClick={() => setApprovalFilter('All')}
+                className={`px-2.5 py-1 rounded-lg font-extrabold transition-all ${
+                  approvalFilter === 'All'
+                    ? 'bg-red-600 text-white'
+                    : 'text-zinc-400 hover:text-white'
+                }`}
+              >
+                All Approval
+              </button>
+              <button
+                onClick={() => setApprovalFilter('Approved')}
+                className={`px-2.5 py-1 rounded-lg font-extrabold transition-all flex items-center gap-1 ${
+                  approvalFilter === 'Approved'
+                    ? 'bg-emerald-600 text-white'
+                    : 'text-zinc-400 hover:text-white'
+                }`}
+              >
+                <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                Approved
+              </button>
+              <button
+                onClick={() => setApprovalFilter('NotApproved')}
+                className={`px-2.5 py-1 rounded-lg font-extrabold transition-all flex items-center gap-1 ${
+                  approvalFilter === 'NotApproved'
+                    ? 'bg-amber-600 text-white'
+                    : 'text-zinc-400 hover:text-white'
+                }`}
+              >
+                <AlertCircle className="w-3 h-3 text-amber-400" />
+                Not Approved
+              </button>
             </div>
           </div>
         </div>
@@ -914,12 +986,37 @@ export const VideosTab: React.FC<VideosTabProps> = ({
             </div>
 
             <div className="flex items-center gap-2 flex-wrap">
+              {/* Batch Approve Selected */}
+              {onBatchApprove && (
+                <>
+                  <button
+                    onClick={() => handleBatchApprovalToggle(true)}
+                    disabled={isApprovingBatch}
+                    className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-extrabold flex items-center gap-1.5 shadow-sm transition-all active:scale-95 disabled:opacity-50"
+                    title="Mark all selected videos as Approved"
+                  >
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    <span>Approve Selected ({selectedIds.length})</span>
+                  </button>
+
+                  <button
+                    onClick={() => handleBatchApprovalToggle(false)}
+                    disabled={isApprovingBatch}
+                    className="px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-amber-400 hover:text-amber-300 font-extrabold flex items-center gap-1.5 border border-zinc-700 transition-all active:scale-95 disabled:opacity-50"
+                    title="Mark all selected videos as Not Approved"
+                  >
+                    <AlertCircle className="w-3.5 h-3.5" />
+                    <span>Unapprove Selected</span>
+                  </button>
+                </>
+              )}
+
               <button
                 onClick={() => handleCopyCommaSeparated('direct')}
                 className="px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-white font-extrabold flex items-center gap-1.5 transition-all"
               >
                 <Copy className="w-3.5 h-3.5 text-red-400" />
-                <span>Copy Selected Direct Links (Comma Separated)</span>
+                <span>Copy Selected Direct Links</span>
               </button>
 
               <button
@@ -1026,7 +1123,8 @@ export const VideosTab: React.FC<VideosTabProps> = ({
                         </div>
 
                         {/* Status & Views Row */}
-                        <div className="flex items-center justify-between text-[11px] pt-1">
+                        <div className="flex flex-wrap items-center justify-between gap-1.5 text-[11px] pt-1">
+                          {/* Active / Inactive Status */}
                           <button
                             onClick={() => onToggleVideoStatus(video.id, video.is_active)}
                             className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black transition-all active:scale-95"
@@ -1043,7 +1141,32 @@ export const VideosTab: React.FC<VideosTabProps> = ({
                             )}
                           </button>
 
-                          <div className="flex items-center gap-1 font-mono font-bold text-blue-500">
+                          {/* Approval Status Toggle */}
+                          <button
+                            onClick={() =>
+                              onToggleApproval &&
+                              onToggleApproval(
+                                video.id,
+                                video.is_approved === true || video.approved === true
+                              )
+                            }
+                            className="transition-transform active:scale-95"
+                            title="Click to toggle approval status"
+                          >
+                            {video.is_approved === true || video.approved === true ? (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-emerald-600/20 text-emerald-400 border border-emerald-500/30">
+                                <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                                Approved
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-black bg-amber-500/20 text-amber-400 border border-amber-500/30">
+                                <AlertCircle className="w-3 h-3 text-amber-400" />
+                                Not Approved
+                              </span>
+                            )}
+                          </button>
+
+                          <div className="flex items-center gap-1 font-mono font-bold text-blue-500 ml-auto">
                             <Eye className="w-3 h-3" />
                             <span>{getVideoViewCount(video).toLocaleString()}</span>
                           </div>
@@ -1102,6 +1225,7 @@ export const VideosTab: React.FC<VideosTabProps> = ({
                   <th className="py-3.5 px-4">Firestore Doc ID</th>
                   <th className="py-3.5 px-4">Direct Stream URL</th>
                   <th className="py-3.5 px-4 text-center">Status</th>
+                  <th className="py-3.5 px-4 text-center">Approval</th>
                   <th className="py-3.5 px-4 text-center">HLS / ABR</th>
                   <th className="py-3.5 px-4 text-center">Stream Health</th>
                   <th className="py-3.5 px-4 text-center">Views</th>
@@ -1111,7 +1235,7 @@ export const VideosTab: React.FC<VideosTabProps> = ({
               <tbody className={`divide-y ${isDark ? 'divide-zinc-800/60' : 'divide-zinc-100'}`}>
                 {filteredVideos.length === 0 ? (
                   <tr>
-                    <td colSpan={isPreviewEnabled ? 9 : 8} className={`py-12 text-center ${isDark ? 'text-zinc-500' : 'text-zinc-400'}`}>
+                    <td colSpan={isPreviewEnabled ? 10 : 9} className={`py-12 text-center ${isDark ? 'text-zinc-500' : 'text-zinc-400'}`}>
                       <Film className="w-8 h-8 mx-auto mb-2 text-zinc-600 opacity-60" />
                       <p className="font-bold text-sm">No videos found.</p>
                       <p className="text-xs mt-1">Add direct stream links using the form above or adjust your search filters.</p>
@@ -1120,6 +1244,7 @@ export const VideosTab: React.FC<VideosTabProps> = ({
                 ) : (
                   filteredVideos.map((video) => {
                     const isSelected = selectedIds.includes(video.id);
+                    const isApproved = video.is_approved === true || video.approved === true;
 
                     return (
                       <tr
@@ -1202,7 +1327,7 @@ export const VideosTab: React.FC<VideosTabProps> = ({
                           <button
                             onClick={() => onToggleVideoStatus(video.id, video.is_active)}
                             className="transition-transform active:scale-95"
-                            title="Click to toggle status"
+                            title="Click to toggle active status"
                           >
                             {video.is_active ? (
                               <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-emerald-600 text-white shadow-sm hover:bg-emerald-500">
@@ -1213,6 +1338,29 @@ export const VideosTab: React.FC<VideosTabProps> = ({
                               <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-zinc-700 text-zinc-300 hover:bg-zinc-600">
                                 <span className="w-1.5 h-1.5 rounded-full bg-zinc-400" />
                                 Inactive
+                              </span>
+                            )}
+                          </button>
+                        </td>
+
+                        {/* Approval Status Badge */}
+                        <td className="py-3.5 px-4 text-center align-middle">
+                          <button
+                            onClick={() =>
+                              onToggleApproval && onToggleApproval(video.id, isApproved)
+                            }
+                            className="transition-transform active:scale-95"
+                            title="Click to toggle approval status"
+                          >
+                            {isApproved ? (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-emerald-600/20 text-emerald-400 border border-emerald-500/30 hover:bg-emerald-600 hover:text-white transition-all shadow-sm">
+                                <CheckCircle2 className="w-3 h-3 text-emerald-400" />
+                                Approved
+                              </span>
+                            ) : (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[10px] font-black bg-amber-500/20 text-amber-400 border border-amber-500/30 hover:bg-amber-600 hover:text-white transition-all">
+                                <AlertCircle className="w-3 h-3 text-amber-400" />
+                                Not Approved
                               </span>
                             )}
                           </button>
