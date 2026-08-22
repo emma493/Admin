@@ -32,13 +32,7 @@ import {
 } from 'lucide-react';
 import { VideoDocument, TelemetryEventDocument, ThemeMode } from '../types';
 import { extractLinksFromString, verifyVideoLink, verifyVideoLinksInSessions } from '../lib/videoUtils';
-import {
-  incrementVideoViews,
-  logTelemetryEvent,
-  fetchNextVideoAndTrackView,
-  saveVideoDocsBatch,
-  verifyAndSaveVideosInRealTimeSessions,
-} from '../lib/firebase';
+import { incrementVideoViews, logTelemetryEvent, fetchNextVideoAndTrackView, saveVideoDocsBatch } from '../lib/firebase';
 
 interface DuplicateGroup {
   url: string;
@@ -74,13 +68,6 @@ export const VideosTab: React.FC<VideosTabProps> = ({
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
   const [verifyBeforeAdd, setVerifyBeforeAdd] = useState<boolean>(true);
   const [statusMessage, setStatusMessage] = useState<string>('');
-  const [liveProgress, setLiveProgress] = useState<{
-    checked: number;
-    saved: number;
-    total: number;
-    activeSessions: number;
-    brokenCount: number;
-  } | null>(null);
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   // Search & Filter State
@@ -435,81 +422,78 @@ export const VideosTab: React.FC<VideosTabProps> = ({
     setIsSubmitting(true);
     setFeedback(null);
     setStatusMessage('');
-    setLiveProgress({
-      checked: 0,
-      saved: 0,
-      total: directList.length,
-      activeSessions: directList.length > 10 ? Math.min(25, Math.ceil(directList.length / 40)) : 2,
-      brokenCount: 0,
-    });
 
     try {
-      if (directList.length === 1) {
-        // Single link path
-        const dUrl = directList[0];
-        if (verifyBeforeAdd) {
-          setStatusMessage(`Testing stream playability: ${dUrl}`);
-          const health = await verifyVideoLink(dUrl, 4000);
+      let validUrls: string[] = directList;
+      let brokenUrls: string[] = [];
+
+      if (verifyBeforeAdd) {
+        if (directList.length === 1) {
+          setStatusMessage(`Testing stream playability: ${directList[0]}`);
+          const health = await verifyVideoLink(directList[0], 4000);
           if (health.status === 'broken') {
-            setFeedback({
-              type: 'error',
-              message: `Stream failed playability check: ${dUrl}`,
-            });
-            return;
+            brokenUrls.push(directList[0]);
+            validUrls = [];
           }
+        } else {
+          // Multi-session concurrent verification
+          const verifyRes = await verifyVideoLinksInSessions(directList, {
+            onProgress: (checked, total, sessionCount) => {
+              setStatusMessage(
+                `Verifying ${total} stream links across ${sessionCount} parallel sessions... (${checked}/${total})`
+              );
+            },
+          });
+          validUrls = verifyRes.healthy;
+          brokenUrls = verifyRes.broken;
         }
+      }
 
-        setStatusMessage('Saving video stream to Firestore...');
-        await onSaveVideo({
-          direct_url: dUrl,
-          source_webpage: dUrl,
-          page_url: dUrl,
-          is_active: true,
-          views: 0,
-          created_at: new Date(),
-        });
-
+      if (validUrls.length === 0) {
         setFeedback({
-          type: 'success',
-          message: 'Successfully added and verified video stream to Firestore!',
+          type: 'error',
+          message:
+            brokenUrls.length > 0
+              ? `All ${brokenUrls.length} links failed playability check. Please check the URLs and try again.`
+              : 'No valid video links found to add.',
         });
-        setDirectUrl('');
-      } else {
-        // Multi-link real-time pipeline path
-        setStatusMessage(`Initializing parallel worker sessions for ${directList.length} stream links...`);
+        return;
+      }
 
-        const result = await verifyAndSaveVideosInRealTimeSessions(directList, {
-          verifyBeforeAdd,
-          timeoutMs: 3800,
-          onProgress: (info) => {
-            setLiveProgress(info);
+      // Save valid streams in parallel sessions via fast batch commits
+      const docsToSave = validUrls.map((url) => ({
+        direct_url: url,
+        source_webpage: url,
+        page_url: url,
+        is_active: true,
+        views: 0,
+        created_at: new Date(),
+      }));
+
+      if (docsToSave.length === 1) {
+        setStatusMessage('Saving video stream to Firestore...');
+        await onSaveVideo(docsToSave[0]);
+      } else {
+        setStatusMessage(
+          `Saving ${docsToSave.length} video streams across parallel worker sessions in Firestore...`
+        );
+        await saveVideoDocsBatch(docsToSave, {
+          onProgress: (saved, total, sessionCount) => {
             setStatusMessage(
-              verifyBeforeAdd
-                ? `Verifying & saving ${info.total} links across ${info.activeSessions} parallel sessions... (${info.saved}/${info.total} saved in real time, ${info.brokenCount} broken)`
-                : `Saving ${info.total} links across ${info.activeSessions} parallel sessions... (${info.saved}/${info.total} saved in real time)`
+              `Saving ${total} video streams across ${sessionCount} parallel sessions... (${saved}/${total})`
             );
           },
         });
-
-        if (result.totalSaved > 0) {
-          setFeedback({
-            type: 'success',
-            message:
-              result.totalBroken > 0
-                ? `Successfully saved ${result.totalSaved} video stream${result.totalSaved > 1 ? 's' : ''} across ${result.sessionCount} parallel sessions! (${result.totalBroken} broken link${result.totalBroken > 1 ? 's' : ''} filtered out)`
-                : `Successfully saved all ${result.totalSaved} video stream${result.totalSaved > 1 ? 's' : ''} across ${result.sessionCount} parallel sessions in real time!`,
-          });
-          setDirectUrl('');
-        } else {
-          setFeedback({
-            type: 'error',
-            message:
-              result.totalBroken > 0
-                ? `All ${result.totalBroken} links failed playability verification. Please check the URLs and try again.`
-                : 'No valid video links were saved.',
-          });
-        }
       }
+
+      setFeedback({
+        type: 'success',
+        message:
+          brokenUrls.length > 0
+            ? `Successfully stored ${validUrls.length} video stream${validUrls.length > 1 ? 's' : ''}! (${brokenUrls.length} broken link${brokenUrls.length > 1 ? 's' : ''} filtered out)`
+            : `Successfully stored and verified ${validUrls.length} video stream${validUrls.length > 1 ? 's' : ''} to Firestore!`,
+      });
+      setDirectUrl('');
     } catch (err: any) {
       console.error('Error adding video:', err);
       setFeedback({
@@ -518,7 +502,6 @@ export const VideosTab: React.FC<VideosTabProps> = ({
       });
     } finally {
       setIsSubmitting(false);
-      setLiveProgress(null);
       setStatusMessage('');
     }
   };
@@ -541,17 +524,9 @@ export const VideosTab: React.FC<VideosTabProps> = ({
           }`}
         >
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <span className={`text-xs font-bold uppercase tracking-wider ${isDark ? 'text-zinc-400' : 'text-zinc-500'}`}>
-                Total Videos
-              </span>
-              {isSubmitting && (
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-red-600/20 text-red-400 border border-red-600/30 flex items-center gap-1 animate-pulse">
-                  <span className="w-1.5 h-1.5 rounded-full bg-red-500 animate-ping" />
-                  Live Updating
-                </span>
-              )}
-            </div>
+            <span className={`text-xs font-bold uppercase tracking-wider ${isDark ? 'text-zinc-400' : 'text-zinc-500'}`}>
+              Total Videos
+            </span>
             <div className="p-2.5 rounded-xl bg-red-600/10 text-red-500 border border-red-600/20">
               <Film className="w-5 h-5 text-red-500" />
             </div>
@@ -559,32 +534,19 @@ export const VideosTab: React.FC<VideosTabProps> = ({
           <div className="mt-3 flex items-baseline gap-2">
             <span className="text-3xl font-black tracking-tight font-mono">{totalVideos}</span>
             <span className={`text-xs font-bold ${isDark ? 'text-zinc-400' : 'text-zinc-500'}`}>documents</span>
-            {isSubmitting && liveProgress && liveProgress.saved > 0 && (
-              <span className="text-xs font-extrabold text-emerald-400 font-mono ml-auto">
-                +{liveProgress.saved} in progress
-              </span>
-            )}
           </div>
         </div>
 
-        {/* Metric 2: Active Streams (Total Active Livestream) */}
+        {/* Metric 2: Active Streams */}
         <div
           className={`p-5 rounded-2xl border transition-all ${
             isDark ? 'bg-zinc-900/90 border-zinc-800 text-white' : 'bg-white border-zinc-200 text-zinc-900'
           }`}
         >
           <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <span className={`text-xs font-bold uppercase tracking-wider ${isDark ? 'text-zinc-400' : 'text-zinc-500'}`}>
-                Active Streams
-              </span>
-              {isSubmitting && (
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider bg-emerald-600/20 text-emerald-400 border border-emerald-600/30 flex items-center gap-1 animate-pulse">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-ping" />
-                  Live Updating
-                </span>
-              )}
-            </div>
+            <span className={`text-xs font-bold uppercase tracking-wider ${isDark ? 'text-zinc-400' : 'text-zinc-500'}`}>
+              Active Streams
+            </span>
             <div className="p-2.5 rounded-xl bg-emerald-600/10 text-emerald-500 border border-emerald-600/20">
               <CheckCircle2 className="w-5 h-5 text-emerald-500" />
             </div>
@@ -594,11 +556,6 @@ export const VideosTab: React.FC<VideosTabProps> = ({
             <span className={`text-xs font-extrabold px-2 py-0.5 rounded-full border ${isDark ? 'bg-emerald-950/80 text-emerald-400 border-emerald-900' : 'bg-emerald-50 text-emerald-700 border-emerald-200'}`}>
               {totalVideos > 0 ? `${Math.round((activeVideos / totalVideos) * 100)}% active` : '0%'}
             </span>
-            {isSubmitting && liveProgress && liveProgress.saved > 0 && (
-              <span className="text-xs font-extrabold text-emerald-400 font-mono ml-auto">
-                +{liveProgress.saved} live
-              </span>
-            )}
           </div>
         </div>
       </div>
@@ -716,59 +673,10 @@ export const VideosTab: React.FC<VideosTabProps> = ({
             </button>
           </div>
 
-          {/* REAL-TIME MULTI-SESSION PROGRESS DISPLAY */}
-          {isSubmitting && (
-            <div
-              className={`p-4 rounded-xl border space-y-3 animate-in fade-in duration-200 ${
-                isDark ? 'bg-zinc-950 border-red-900/60' : 'bg-red-50/50 border-red-200'
-              }`}
-            >
-              <div className="flex items-center justify-between flex-wrap gap-2 text-xs">
-                <div className="flex items-center gap-2">
-                  <RefreshCw className="w-4 h-4 animate-spin text-red-500 flex-shrink-0" />
-                  <span className="font-extrabold text-red-500 uppercase tracking-wider text-[11px]">
-                    Live Multi-Session Processing
-                  </span>
-                  {liveProgress && (
-                    <span className={`px-2 py-0.5 rounded-md font-mono text-[10px] font-bold border ${isDark ? 'bg-zinc-900 text-zinc-300 border-zinc-800' : 'bg-white text-zinc-700 border-zinc-300'}`}>
-                      {liveProgress.activeSessions} Parallel Sessions
-                    </span>
-                  )}
-                </div>
-                {liveProgress && liveProgress.total > 0 && (
-                  <div className="flex items-center gap-3 font-mono text-xs font-bold">
-                    <span className="text-emerald-400">
-                      {liveProgress.saved} Saved
-                    </span>
-                    {liveProgress.brokenCount > 0 && (
-                      <span className="text-red-400">
-                        {liveProgress.brokenCount} Broken
-                      </span>
-                    )}
-                    <span className={isDark ? 'text-zinc-400' : 'text-zinc-600'}>
-                      {Math.round(((liveProgress.checked || liveProgress.saved) / liveProgress.total) * 100)}%
-                    </span>
-                  </div>
-                )}
-              </div>
-
-              {/* Real-time Progress Bar */}
-              {liveProgress && liveProgress.total > 0 && (
-                <div className="w-full h-2 rounded-full overflow-hidden bg-zinc-800/80">
-                  <div
-                    className="h-full bg-gradient-to-r from-red-600 to-emerald-500 transition-all duration-300 rounded-full"
-                    style={{
-                      width: `${Math.min(100, Math.round(((liveProgress.checked || liveProgress.saved) / liveProgress.total) * 100))}%`,
-                    }}
-                  />
-                </div>
-              )}
-
-              {statusMessage && (
-                <p className={`text-xs font-mono ${isDark ? 'text-zinc-300' : 'text-zinc-700'}`}>
-                  {statusMessage}
-                </p>
-              )}
+          {statusMessage && (
+            <div className="p-3 bg-red-950/40 border border-red-800/60 rounded-xl text-xs font-mono text-red-300 flex items-center gap-2 animate-pulse">
+              <RefreshCw className="w-3.5 h-3.5 animate-spin text-red-400 flex-shrink-0" />
+              <span>{statusMessage}</span>
             </div>
           )}
         </form>

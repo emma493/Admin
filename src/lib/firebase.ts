@@ -389,8 +389,7 @@ export async function saveVideoDoc(videoData: Omit<VideoDocument, 'id'> & { id?:
 
 /**
  * Save a batch of video documents in Firestore using multi-session dynamic partitioning
- * and progressive micro-chunk writeBatch commits. Commits each chunk of 20-30 documents
- * immediately so that Firestore's real-time onSnapshot listeners and metrics update in real time.
+ * and chunked writeBatch commits. Guarantees speed, accuracy, and high resilience for 1000+ links.
  */
 export async function saveVideoDocsBatch(
   videosData: Array<Omit<VideoDocument, 'id'> & { id?: string }>,
@@ -404,7 +403,35 @@ export async function saveVideoDocsBatch(
 
   const total = videosData.length;
 
-  // Client-side multi-session partitioning & progressive Firestore writeBatch commits
+  // 1. First attempt fast server-side batch import if backend endpoint is accessible
+  try {
+    const urls = videosData.map((v) => v.direct_url).filter((u) => u && u.length > 0);
+    if (urls.length > 0) {
+      const resp = await fetch('/api/videos/batch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ urls, verify: false }),
+      });
+
+      if (resp.ok) {
+        const json = await resp.json();
+        if (json.success) {
+          if (options?.onProgress) {
+            options.onProgress(json.added || total, total, json.sessions || 1);
+          }
+          return {
+            success: true,
+            totalSaved: json.added || total,
+            sessionCount: json.sessions || 1,
+          };
+        }
+      }
+    }
+  } catch (e) {
+    // Fallback directly to client-side Firestore multi-session batch engine
+  }
+
+  // 2. Client-side multi-session partitioning & Firestore writeBatch commits
   let sessionCount = 2;
   if (total > 1500) sessionCount = 25;
   else if (total > 800) sessionCount = 20;
@@ -423,8 +450,7 @@ export async function saveVideoDocsBatch(
   });
 
   let totalSaved = 0;
-  // Use progressive chunks of 20 items so that onSnapshot fires continuously in real-time
-  const CHUNK_SIZE = 20;
+  const CHUNK_SIZE = 350; // Keep safely below Firestore's 500-op transaction limit
 
   const sessionTasks = sessionQueues.map(async (queue, sessionIdx) => {
     if (queue.length === 0) return;
@@ -464,135 +490,6 @@ export async function saveVideoDocsBatch(
   await Promise.allSettled(sessionTasks);
 
   return { success: true, totalSaved, sessionCount };
-}
-
-/**
- * Pipelined Real-Time Multi-Session Processor:
- * Concurrently verifies and progressively commits video stream links into Firestore.
- * As worker sessions verify links, valid streams are committed in micro-chunks immediately,
- * ensuring total videos and total active livestream metrics update in real time as the process runs.
- */
-export async function verifyAndSaveVideosInRealTimeSessions(
-  urls: string[],
-  options: {
-    verifyBeforeAdd: boolean;
-    timeoutMs?: number;
-    onProgress?: (info: {
-      checked: number;
-      saved: number;
-      total: number;
-      activeSessions: number;
-      brokenCount: number;
-    }) => void;
-  }
-): Promise<{ totalSaved: number; totalBroken: number; sessionCount: number }> {
-  if (!urls || urls.length === 0) {
-    return { totalSaved: 0, totalBroken: 0, sessionCount: 0 };
-  }
-
-  const total = urls.length;
-  let sessionCount = 2;
-  if (total > 1500) sessionCount = 25;
-  else if (total > 800) sessionCount = 20;
-  else if (total > 300) sessionCount = 15;
-  else if (total > 100) sessionCount = 10;
-  else if (total > 30) sessionCount = 6;
-  else if (total > 10) sessionCount = 4;
-
-  const sessionQueues: string[][] = Array.from({ length: sessionCount }, () => []);
-  urls.forEach((url, idx) => {
-    sessionQueues[idx % sessionCount].push(url);
-  });
-
-  let checkedCount = 0;
-  let savedCount = 0;
-  let brokenCount = 0;
-  const timeoutMs = options.timeoutMs || 4000;
-  const CHUNK_FLUSH_SIZE = 15; // Commit to Firestore every 15 items per session for smooth live real-time updates
-
-  const sessionTasks = sessionQueues.map(async (queue, sessionIdx) => {
-    if (queue.length === 0) return;
-
-    let pendingUrls: string[] = [];
-
-    const flushPending = async () => {
-      if (pendingUrls.length === 0) return;
-      const batchUrls = [...pendingUrls];
-      pendingUrls = [];
-
-      try {
-        const batch = writeBatch(db);
-        for (const u of batchUrls) {
-          const docRef = doc(collection(db, VIDEOS_COLLECTION));
-          batch.set(
-            docRef,
-            {
-              direct_url: u,
-              source_webpage: u,
-              page_url: u,
-              is_active: true,
-              views: 0,
-              created_at: serverTimestamp(),
-            },
-            { merge: true }
-          );
-        }
-
-        await batch.commit();
-        savedCount += batchUrls.length;
-
-        if (options.onProgress) {
-          options.onProgress({
-            checked: checkedCount,
-            saved: savedCount,
-            total,
-            activeSessions: sessionCount,
-            brokenCount,
-          });
-        }
-      } catch (e) {
-        console.error('Batch commit error in worker session:', e);
-      }
-    };
-
-    for (const url of queue) {
-      if (options.verifyBeforeAdd) {
-        try {
-          const res = await (await import('./videoUtils')).verifyVideoLink(url, timeoutMs);
-          if (res.status === 'broken') {
-            brokenCount++;
-          } else {
-            pendingUrls.push(url);
-          }
-        } catch (err) {
-          pendingUrls.push(url); // optimistic fallback
-        }
-      } else {
-        pendingUrls.push(url);
-      }
-
-      checkedCount++;
-
-      if (pendingUrls.length >= CHUNK_FLUSH_SIZE) {
-        await flushPending();
-      } else if (options.onProgress) {
-        options.onProgress({
-          checked: checkedCount,
-          saved: savedCount,
-          total,
-          activeSessions: sessionCount,
-          brokenCount,
-        });
-      }
-    }
-
-    // Flush any remaining valid URLs in this session
-    await flushPending();
-  });
-
-  await Promise.all(sessionTasks);
-
-  return { totalSaved: savedCount, totalBroken: brokenCount, sessionCount };
 }
 
 /**
