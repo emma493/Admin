@@ -25,6 +25,8 @@ export type NotificationStatus = 'active' | 'paused';
 
 export type VideoTranscodeStatus = 'processing' | 'ready' | 'failed';
 
+export type NavigationTab = 'videos' | 'ads';
+
 export interface VideoDocument {
   id: string;
   page_url?: string;
@@ -36,6 +38,20 @@ export interface VideoDocument {
   // Adaptive HLS pipeline fields (written by the transcodeVideo Cloud Function,
   // never set directly from the admin dashboard). Absent on legacy docs that
   // haven't been picked up by the pipeline yet - always treat as optional.
+  status?: VideoTranscodeStatus;
+  status_error?: string;
+  hls_url?: string;
+  poster_url?: string;
+}
+
+export interface AdDocument {
+  id: string;
+  page_url?: string;
+  source_webpage?: string;
+  direct_url: string;
+  is_active: boolean;
+  created_at: Timestamp | Date | number | any;
+  views: number;
   status?: VideoTranscodeStatus;
   status_error?: string;
   hls_url?: string;

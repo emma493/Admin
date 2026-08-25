@@ -1,9 +1,9 @@
 import React from 'react';
 import { Sun, Moon, Menu, X } from 'lucide-react';
-import { ThemeMode } from '../types';
+import { NavigationTab, ThemeMode } from '../types';
 
 interface HeaderProps {
-  activeTab: 'videos';
+  activeTab: NavigationTab;
   theme: ThemeMode;
   onToggleTheme: () => void;
   firestoreConnected: boolean;
@@ -12,6 +12,7 @@ interface HeaderProps {
 }
 
 export const Header: React.FC<HeaderProps> = ({
+  activeTab,
   theme,
   onToggleTheme,
   firestoreConnected,
@@ -19,6 +20,12 @@ export const Header: React.FC<HeaderProps> = ({
   isMobileMenuOpen,
 }) => {
   const isDark = theme === 'dark';
+
+  const tabTitle = activeTab === 'ads' ? 'Video Ads Manager' : 'Videos Manager';
+  const tabDesc =
+    activeTab === 'ads'
+      ? 'Manage dedicated video ad streams, health verification, and view impressions'
+      : 'Manage video stream links, active status, and views count';
 
   return (
     <header
@@ -48,7 +55,7 @@ export const Header: React.FC<HeaderProps> = ({
         <div>
           <div className="flex items-center gap-2">
             <h1 className="text-lg sm:text-xl font-black tracking-tight capitalize">
-              Videos Manager
+              {tabTitle}
             </h1>
             <span
               className={`px-2 py-0.5 text-[10px] font-black rounded-full uppercase tracking-wider flex items-center gap-1 ${
@@ -60,7 +67,7 @@ export const Header: React.FC<HeaderProps> = ({
             </span>
           </div>
           <p className={`text-xs ${isDark ? 'text-zinc-400' : 'text-zinc-500'} hidden sm:block`}>
-            Manage video stream links, active status, and views count
+            {tabDesc}
           </p>
         </div>
       </div>
