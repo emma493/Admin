@@ -625,7 +625,6 @@ export function subscribeToAds(
         const data = docSnap.data();
         return {
           id: docSnap.id,
-          type: data.type || 'iframe',
           page_url: data.page_url || data.source_webpage || '',
           source_webpage: data.source_webpage || data.page_url || '',
           direct_url: data.direct_url || '',
@@ -660,11 +659,10 @@ export async function saveAdDoc(adData: Omit<AdDocument, 'id'> & { id?: string }
     const sourceWebpage = adData.source_webpage || adData.page_url || '';
 
     const payload: Record<string, any> = {
-      is_active: typeof adData.is_active === 'boolean' ? adData.is_active : true,
-      type: adData.type || 'iframe',
       direct_url: adData.direct_url || '',
       source_webpage: sourceWebpage,
       page_url: sourceWebpage,
+      is_active: typeof adData.is_active === 'boolean' ? adData.is_active : true,
       views: typeof adData.views === 'number' ? adData.views : 0,
       created_at: adData.created_at ? adData.created_at : serverTimestamp(),
     };

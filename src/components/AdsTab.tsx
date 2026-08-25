@@ -32,7 +32,7 @@ import {
   Megaphone,
 } from 'lucide-react';
 import { AdDocument, TelemetryEventDocument, ThemeMode } from '../types';
-import { extractXvideosLinksFromString, convertXvideosToEmbedUrl, verifyVideoLink, XvideosConvertedLink } from '../lib/videoUtils';
+import { extractLinksFromString, verifyVideoLink } from '../lib/videoUtils';
 import { incrementAdViews, logTelemetryEvent, fetchNextAdAndTrackView, FIRESTORE_DATABASE_ID } from '../lib/firebase';
 
 interface DuplicateGroup {
@@ -97,8 +97,8 @@ export const AdsTab: React.FC<AdsTabProps> = ({
   // Clipboard Copied indicator state
   const [copiedId, setCopiedId] = useState<string | null>(null);
 
-  // Universal XVideos link extraction and canonical embed conversion
-  const parsedAdLinks = useMemo(() => extractXvideosLinksFromString(directUrl), [directUrl]);
+  // Universal link extraction (handles double quotes, single quotes, commas, brackets, etc.)
+  const parsedDirectUrls = extractLinksFromString(directUrl);
 
   // Real-time calculation of duplicate links in current ads list
   const liveDuplicatesSummary = useMemo(() => {
@@ -406,12 +406,12 @@ export const AdsTab: React.FC<AdsTabProps> = ({
   const handleAddAd = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    const linkList = parsedAdLinks;
+    const directList = parsedDirectUrls;
 
-    if (linkList.length === 0) {
+    if (directList.length === 0) {
       setFeedback({
         type: 'error',
-        message: 'Please enter at least one XVideos watch URL or iframe embed link.',
+        message: 'Please enter at least one direct stream URL (.mp4, .m3u8, .webm, etc.) to add.',
       });
       return;
     }
@@ -425,32 +425,24 @@ export const AdsTab: React.FC<AdsTabProps> = ({
     const errorMessages: string[] = [];
 
     try {
-      for (let i = 0; i < linkList.length; i++) {
-        const item = linkList[i];
+      for (let i = 0; i < directList.length; i++) {
+        const dUrl = directList[i];
 
         if (verifyBeforeAdd) {
-          setStatusMessage(`Checking embed URL format (${i + 1}/${linkList.length}): ${item.embedUrl}`);
-          // Test link format
-          if (!item.embedUrl.startsWith('http')) {
+          setStatusMessage(`Testing direct stream playability (${i + 1}/${directList.length}): ${dUrl}`);
+          const health = await verifyVideoLink(dUrl, 5000);
+
+          if (health.status === 'broken') {
             skippedCount++;
-            errorMessages.push(`Invalid embed URL: ${item.embedUrl}`);
+            errorMessages.push(`Direct link failed playability check: ${dUrl}`);
             continue;
           }
         }
 
-        setStatusMessage(`Saving XVideos iframe ad (${i + 1}/${linkList.length})...`);
-        // Firestore Document Entry per specification:
-        // {
-        //   "is_active": true,
-        //   "type": "iframe",
-        //   "direct_url": "https://www.xvideos.com/embedframe/{VIDEO_ID}",
-        //   "views": 0,
-        //   "created_at": "SERVER_TIMESTAMP"
-        // }
+        setStatusMessage(`Saving video ad stream (${i + 1}/${directList.length})...`);
         await onSaveAd({
+          direct_url: dUrl,
           is_active: true,
-          type: 'iframe',
-          direct_url: item.embedUrl,
           views: 0,
           created_at: new Date(),
         });
@@ -462,8 +454,8 @@ export const AdsTab: React.FC<AdsTabProps> = ({
           type: 'success',
           message:
             skippedCount > 0
-              ? `Successfully saved ${addedCount} XVideos iframe ad${addedCount > 1 ? 's' : ''}! (${skippedCount} link${skippedCount > 1 ? 's' : ''} skipped)`
-              : `Successfully added ${addedCount} XVideos iframe ad${addedCount > 1 ? 's' : ''} to Firestore ads collection!`,
+              ? `Successfully stored ${addedCount} video ad${addedCount > 1 ? 's' : ''}! (${skippedCount} link${skippedCount > 1 ? 's' : ''} failed playability check)`
+              : `Successfully added and verified ${addedCount} video ad stream${addedCount > 1 ? 's' : ''} in Firestore!`,
         });
         setDirectUrl('');
       } else {
@@ -472,7 +464,7 @@ export const AdsTab: React.FC<AdsTabProps> = ({
           message:
             errorMessages.length > 0
               ? errorMessages.join(' | ')
-              : 'Failed to add video ads. Please check your links.',
+              : 'Failed to add video ad streams. Please check your links.',
         });
       }
     } catch (err: any) {
@@ -493,16 +485,17 @@ export const AdsTab: React.FC<AdsTabProps> = ({
     setTimeout(() => setCopiedId(null), 2000);
   };
 
-  const frontendCodeSnippet = `<!-- Example: Fetch & Render Active XVideos Iframe Ads in ads.html -->
-<div id="ad-container" style="position:relative; width:100%; height:100%; background:#000; overflow:hidden;">
-  <div id="ad-badge" style="position:absolute; top:12px; left:12px; background:rgba(0,0,0,0.8); color:#ff3b30; font-size:11px; font-weight:900; padding:4px 8px; border-radius:6px; z-index:10; border:1px solid rgba(255,59,48,0.4);">SPONSORED AD</div>
-  <iframe id="ad-iframe" src="about:blank" frameborder="0" width="100%" height="100%" scrolling="no" allowfullscreen="allowfullscreen" allow="autoplay; fullscreen" style="width:100%; height:100%; border:none;"></iframe>
+  const frontendCodeSnippet = `<!-- Example: Fetch & Play Active Video Ads from Shortxx Firestore -->
+<div id="ad-container" style="position:relative; width:100%; max-width:480px; aspect-ratio:9/16; background:#000; border-radius:16px; overflow:hidden;">
+  <video id="ad-video" playsinline webkit-playsinline style="width:100%; height:100%; object-fit:cover;"></video>
+  <div id="ad-badge" style="position:absolute; top:12px; left:12px; background:rgba(0,0,0,0.7); color:#fff; font-size:11px; font-weight:800; padding:4px 8px; border-radius:6px; letter-spacing:0.5px;">AD</div>
 </div>
 
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
   import { getFirestore, collection, query, where, getDocs, doc, updateDoc, increment } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
+  // Replace with your Firebase config or reuse window.__FIREBASE_CONFIG__
   const firebaseConfig = {
     projectId: "intense-augury-28gvj"
   };
@@ -510,7 +503,7 @@ export const AdsTab: React.FC<AdsTabProps> = ({
   const app = initializeApp(firebaseConfig);
   const db = getFirestore(app, "${FIRESTORE_DATABASE_ID}");
 
-  async function loadAndDisplayNextAd() {
+  async function loadAndPlayNextAd() {
     try {
       const adsRef = collection(db, "ads");
       const q = query(adsRef, where("is_active", "==", true));
@@ -521,25 +514,27 @@ export const AdsTab: React.FC<AdsTabProps> = ({
         return;
       }
 
-      // Pick random active iframe ad
+      // Pick random active ad
       const adsList = snap.docs.map(d => ({ id: d.id, ...d.data() }));
       const selectedAd = adsList[Math.floor(Math.random() * adsList.length)];
 
-      const iframe = document.getElementById("ad-iframe");
-      iframe.src = selectedAd.direct_url; // https://www.xvideos.com/embedframe/{VIDEO_ID}
+      const videoEl = document.getElementById("ad-video");
+      videoEl.src = selectedAd.direct_url;
+      videoEl.muted = true; // Required for reliable autoplay
+      videoEl.play();
 
       // Track view atomically in Firestore
       await updateDoc(doc(db, "ads", selectedAd.id), {
         views: increment(1)
       });
-      console.log("Loaded and tracked iframe ad:", selectedAd.id);
+      console.log("Loaded and tracked ad:", selectedAd.id);
     } catch (err) {
       console.error("Failed to load ad:", err);
     }
   }
 
   // Auto load when page is ready
-  window.addEventListener("DOMContentLoaded", loadAndDisplayNextAd);
+  window.addEventListener("DOMContentLoaded", loadAndPlayNextAd);
 </script>`;
 
   return (
@@ -604,7 +599,7 @@ export const AdsTab: React.FC<AdsTabProps> = ({
               <h2 className="text-lg sm:text-xl font-black tracking-tight">Add Video Ads</h2>
             </div>
             <p className={`text-xs mt-1 ${isDark ? 'text-zinc-400' : 'text-zinc-500'}`}>
-              Register XVideos iframe embed links for the <code>ads</code> collection. Watch URLs are converted to clean iframe URLs.
+              Register dedicated video ad stream links (.mp4, .m3u8, .webm, CDN) in Firestore.
             </p>
           </div>
 
@@ -644,12 +639,12 @@ export const AdsTab: React.FC<AdsTabProps> = ({
           <div>
             <div className="flex items-center justify-between mb-1.5">
               <label className={`block text-xs font-extrabold uppercase tracking-wider ${isDark ? 'text-zinc-400' : 'text-zinc-600'}`}>
-                XVideos Ad Link(s) / Embed URLs
+                Direct Ad Stream Link(s)
               </label>
-              {parsedAdLinks.length > 0 && (
+              {parsedDirectUrls.length > 0 && (
                 <span className="text-[11px] font-extrabold px-2 py-0.5 rounded-md bg-red-600/20 text-red-400 border border-red-600/30 flex items-center gap-1">
                   <Sparkles className="w-3 h-3 text-red-400" />
-                  {parsedAdLinks.length} XVideos ad link{parsedAdLinks.length > 1 ? 's' : ''} ready
+                  {parsedDirectUrls.length} ad link{parsedDirectUrls.length > 1 ? 's' : ''} detected
                 </span>
               )}
             </div>
@@ -658,7 +653,7 @@ export const AdsTab: React.FC<AdsTabProps> = ({
                 rows={3}
                 value={directUrl}
                 onChange={(e) => setDirectUrl(e.target.value)}
-                placeholder="Register XVideos iframe embed links"
+                placeholder="Paste direct ad stream URL(s)&#10;e.g., https://cdn.example.com/ad_promo1.mp4, https://stream.example.com/ad_master.m3u8"
                 className={`w-full p-3.5 rounded-xl border text-xs font-mono font-medium focus:outline-none focus:border-red-600 ${
                   isDark
                     ? 'bg-zinc-950 text-white border-zinc-800 placeholder-zinc-600'
@@ -667,7 +662,7 @@ export const AdsTab: React.FC<AdsTabProps> = ({
               />
             </div>
             <p className={`text-[11px] mt-1 ${isDark ? 'text-zinc-500' : 'text-zinc-400'}`}>
-              Tip: Paste single or multiple XVideos watch/embed URLs or raw IDs separated by commas or newlines. They will be formatted into <code>https://www.xvideos.com/embedframe/&#123;VIDEO_ID&#125;</code> automatically.
+              Tip: You can paste a single URL or multiple stream links separated by commas (<code>,</code>) or line breaks.
             </p>
           </div>
 
@@ -681,20 +676,20 @@ export const AdsTab: React.FC<AdsTabProps> = ({
                   className="rounded border-zinc-700 text-red-600 focus:ring-red-600 bg-zinc-950"
                 />
                 <span className={isDark ? 'text-zinc-300' : 'text-zinc-700'}>
-                  Validate embed format before saving
+                  Verify stream playability before adding
                 </span>
               </label>
 
               <span className={`text-xs font-medium ${isDark ? 'text-zinc-400' : 'text-zinc-500'}`}>
-                {parsedAdLinks.length > 0
-                  ? `(${parsedAdLinks.length} embed link entry${parsedAdLinks.length > 1 ? 's' : ''} ready)`
+                {parsedDirectUrls.length > 0
+                  ? `(${parsedDirectUrls.length} ad link entry${parsedDirectUrls.length > 1 ? 's' : ''} ready)`
                   : ''}
               </span>
             </div>
 
             <button
               type="submit"
-              disabled={isSubmitting || parsedAdLinks.length === 0}
+              disabled={isSubmitting || parsedDirectUrls.length === 0}
               className="px-6 py-3 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-extrabold flex items-center gap-2 shadow-lg shadow-red-600/30 transition-all active:scale-95 disabled:opacity-50"
             >
               {isSubmitting ? (
@@ -704,10 +699,10 @@ export const AdsTab: React.FC<AdsTabProps> = ({
               )}
               <span>
                 {isSubmitting
-                  ? 'Saving XVideos Ads...'
-                  : parsedAdLinks.length > 1
-                  ? `Add ${parsedAdLinks.length} XVideos Ads`
-                  : '+ Add XVideos Ad'}
+                  ? 'Verifying & Saving Stream...'
+                  : parsedDirectUrls.length > 1
+                  ? `Add ${parsedDirectUrls.length} Video Ads`
+                  : '+ Add Video Ad'}
               </span>
             </button>
           </div>
@@ -924,10 +919,10 @@ export const AdsTab: React.FC<AdsTabProps> = ({
                   />
                 </th>
                 <th className="py-3.5 px-4">Firestore Doc ID</th>
-                <th className="py-3.5 px-4">Embed / Direct URL</th>
+                <th className="py-3.5 px-4">Direct Stream URL</th>
                 <th className="py-3.5 px-4 text-center">Status</th>
-                <th className="py-3.5 px-4 text-center">Format</th>
-                <th className="py-3.5 px-4 text-center">Health</th>
+                <th className="py-3.5 px-4 text-center">HLS / ABR</th>
+                <th className="py-3.5 px-4 text-center">Stream Health</th>
                 <th className="py-3.5 px-4 text-center">Views</th>
                 <th className="py-3.5 px-4 text-right">Actions</th>
               </tr>
@@ -938,7 +933,7 @@ export const AdsTab: React.FC<AdsTabProps> = ({
                   <td colSpan={8} className={`py-12 text-center ${isDark ? 'text-zinc-500' : 'text-zinc-400'}`}>
                     <Megaphone className="w-8 h-8 mx-auto mb-2 text-zinc-600 opacity-60" />
                     <p className="font-bold text-sm">No video ads found.</p>
-                    <p className="text-xs mt-1">Add XVideos ad links using the form above or adjust your search filters.</p>
+                    <p className="text-xs mt-1">Add direct ad stream links using the form above or adjust your search filters.</p>
                   </td>
                 </tr>
               ) : (
@@ -988,7 +983,7 @@ export const AdsTab: React.FC<AdsTabProps> = ({
                         </div>
                       </td>
 
-                      {/* Direct / Embed Stream URL */}
+                      {/* Direct Stream URL */}
                       <td className="py-3.5 px-4 max-w-md truncate font-mono text-[11px]">
                         <div className="flex items-center gap-1.5">
                           <span className={`truncate ${isDark ? 'text-zinc-200' : 'text-zinc-800'}`} title={ad.direct_url}>
@@ -1029,12 +1024,36 @@ export const AdsTab: React.FC<AdsTabProps> = ({
                         </button>
                       </td>
 
-                      {/* Format / Type */}
+                      {/* HLS / ABR Status */}
                       <td className="py-3.5 px-4 text-center">
-                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-purple-500/20 text-purple-400 border border-purple-500/30 text-[10px] font-extrabold">
-                          <Tv className="w-3 h-3" />
-                          {ad.type || 'iframe'}
-                        </span>
+                        {ad.status === 'ready' && ad.hls_url ? (
+                          <span
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-[10px] font-extrabold"
+                            title={ad.hls_url}
+                          >
+                            <Layers className="w-3 h-3" />
+                            Ready
+                          </span>
+                        ) : ad.status === 'processing' ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-amber-500/20 text-amber-400 border border-amber-500/30 text-[10px] font-extrabold animate-pulse">
+                            <RefreshCw className="w-3 h-3 animate-spin" />
+                            Processing
+                          </span>
+                        ) : ad.status === 'failed' ? (
+                          <span
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-red-600/20 text-red-400 border border-red-600/30 text-[10px] font-extrabold"
+                            title={ad.status_error || 'Transcode failed'}
+                          >
+                            <AlertTriangle className="w-3 h-3" />
+                            Failed
+                          </span>
+                        ) : (
+                          <span
+                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md bg-zinc-700/40 text-zinc-400 border border-zinc-700 text-[10px] font-extrabold"
+                          >
+                            Direct
+                          </span>
+                        )}
                       </td>
 
                       {/* Stream Health */}
@@ -1152,32 +1171,18 @@ export const AdsTab: React.FC<AdsTabProps> = ({
             </div>
 
             <div className="bg-black relative aspect-video flex items-center justify-center">
-              {previewAd.type === 'iframe' || previewAd.direct_url.includes('embedframe') || previewAd.direct_url.includes('xvideos') ? (
-                <iframe
-                  src={previewAd.direct_url}
-                  title="XVideos Ad Preview"
-                  frameBorder="0"
-                  width="100%"
-                  height="100%"
-                  scrolling="no"
-                  allowFullScreen
-                  allow="autoplay; fullscreen"
-                  className="w-full h-full border-0"
-                />
-              ) : (
-                <video
-                  controls
-                  autoPlay
-                  playsInline
-                  src={previewAd.direct_url}
-                  className="w-full h-full object-contain"
-                  onError={(e) => {
-                    console.warn('Video failed to play natively:', e);
-                  }}
-                >
-                  Your browser does not support HTML5 video streaming.
-                </video>
-              )}
+              <video
+                controls
+                autoPlay
+                playsInline
+                src={previewAd.direct_url}
+                className="w-full h-full object-contain"
+                onError={(e) => {
+                  console.warn('Video failed to play natively:', e);
+                }}
+              >
+                Your browser does not support HTML5 video streaming.
+              </video>
             </div>
 
             <div className="p-4 space-y-2 text-xs font-mono">

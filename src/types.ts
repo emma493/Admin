@@ -46,7 +46,6 @@ export interface VideoDocument {
 
 export interface AdDocument {
   id: string;
-  type?: 'iframe' | 'direct' | string;
   page_url?: string;
   source_webpage?: string;
   direct_url: string;
