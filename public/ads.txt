@@ -1,138 +1,235 @@
 # ==============================================================================
-# SHORTXX FIRESTORE DATABASE INTEGRATION GUIDE: ADS COLLECTION
-# Provide this file/text to Gemini to connect your existing frontend to the Ads database
+# AI.DEV DASHBOARD & BACKEND SPECIFICATION: Tabs & Collections
+# SHORTXX FIRESTORE DATABASE INTEGRATION GUIDE FOR "ads" TAB & ADS PAGE
 # ==============================================================================
 
-# 1. DATABASE & FIREBASE CONFIGURATION
+# SYSTEM ARCHITECTURE:
+# The Shortxx Admin Dashboard contains two distinct tabs for managing stream links:
+#
+# 1. "Videos" Tab -> Targets the "videos" collection in Firestore.
+#    - Accepts direct video stream files (.mp4, .m3u8, .webm, CDN).
+#    - Serves the main video feed via `vid.js`.
+#    - DO NOT MODIFY THIS TAB OR ITS DATA FLOW.
+#
+# 2. "Ads" Tab -> Targets the "ads" collection in Firestore.
+#    - Accepts XVideos Watch / Embed URLs and formats them into clean `iframe` URLs.
+#    - Serves the ad section rendered in `ads.html`.
+
+# ------------------------------------------------------------------------------
+# 1. FIREBASE CONFIGURATION
+# ------------------------------------------------------------------------------
 PROJECT_ID="intense-augury-28gvj"
 FIRESTORE_DATABASE_ID="ai-studio-shortxxadmindash-86192a98-919e-436c-80b9-836d96e0e32b"
 ADS_COLLECTION="ads"
-EVENTS_COLLECTION="events"
-
-# 2. DOCUMENT SCHEMA IN FIRESTORE ("ads" collection)
-# Each document in "ads" represents an ad video stream:
-# - id (string): Unique Firestore document ID
-# - direct_url (string): The direct streaming URL (.mp4, .m3u8, .webm, CDN stream)
-# - is_active (boolean): true = enabled/active for playback, false = disabled
-# - views (number): View counter incremented on play
-# - hls_url (string, optional): Adaptive HLS streaming URL (.m3u8) if available
-# - poster_url (string, optional): Thumbnail/poster image URL
-# - page_url (string, optional): Webpage or destination link
-# - created_at (Timestamp): Document creation timestamp
+VIDEOS_COLLECTION="videos"
 
 # ------------------------------------------------------------------------------
-# 3. INSTRUCTIONS FOR GEMINI (FRONTEND INTEGRATION)
+# 2. ADS TAB PROCESSING RULES
 # ------------------------------------------------------------------------------
-# To fetch video ads from this database in your existing frontend player:
-# 
-# Step 1: Initialize Firestore with the named database:
-#   const app = initializeApp({ projectId: "intense-augury-28gvj" });
-#   const db = getFirestore(app, "ai-studio-shortxxadmindash-86192a98-919e-436c-80b9-836d96e0e32b");
+# 1. URL Conversion:
+#    - Extract Video ID using Regex:
+#      `xvideos\.[a-z]+/(?:video(?:\.([a-zA-Z0-9]+)|(\d+))|embedframe/([a-zA-Z0-9]+))`
+#    - Transform into canonical embed format:
+#      `https://www.xvideos.com/embedframe/{VIDEO_ID}`
 #
-# Step 2: Query active video ads from the "ads" collection (identical to the "videos" collection):
-#   const q = query(collection(db, "ads"), where("is_active", "==", true));
-#   const snapshot = await getDocs(q);
-#   const activeAds = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+# 2. Firestore Document Entry ("ads" collection):
+#    {
+#      "is_active": true,
+#      "type": "iframe",
+#      "direct_url": "https://www.xvideos.com/embedframe/{VIDEO_ID}",
+#      "views": 0,
+#      "created_at": "SERVER_TIMESTAMP"
+#    }
 #
-# Step 3: Pick an ad video stream to play:
-#   const selectedAd = activeAds[Math.floor(Math.random() * activeAds.length)];
-#   const streamUrl = selectedAd.hls_url || selectedAd.direct_url;
-#
-# Step 4: Increment the view count in Firestore when played:
-#   await updateDoc(doc(db, "ads", selectedAd.id), {
-#     views: increment(1)
-#   });
-#
-# Step 5: (Optional) Realtime listener for active ads:
-#   onSnapshot(query(collection(db, "ads"), where("is_active", "==", true)), (snapshot) => {
-#     const ads = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-#     // Update your frontend video queue/state with ads
-#   });
+# 3. UI Labeling:
+#    - Placeholder: "Register XVideos iframe embed links"
 
 # ------------------------------------------------------------------------------
-# 4. READY-TO-USE CODE SNIPPETS FOR YOUR FRONTEND
+# 3. FRONTEND INTEGRATION CODE FOR `ads.html`
 # ------------------------------------------------------------------------------
+# Give this code to Gemini to integrate into your frontend `ads.html` page:
 
-# --- JAVASCRIPT / TYPESCRIPT SDK SNIPPET ---
-#
-# import { initializeApp } from 'firebase/app';
-# import { 
-#   getFirestore, 
-#   collection, 
-#   query, 
-#   where, 
-#   getDocs, 
-#   doc, 
-#   updateDoc, 
-#   increment 
-# } from 'firebase/firestore';
-#
-# const firebaseConfig = { projectId: "intense-augury-28gvj" };
-# const app = initializeApp(firebaseConfig);
-# const db = getFirestore(app, "ai-studio-shortxxadmindash-86192a98-919e-436c-80b9-836d96e0e32b");
-#
-# // Function to fetch all active ads:
-# export async function fetchActiveAds() {
-#   const adsRef = collection(db, "ads");
-#   const q = query(adsRef, where("is_active", "==", true));
-#   const snap = await getDocs(q);
-#   return snap.docs.map(d => ({ id: d.id, ...d.data() }));
-# }
-#
-# // Function to fetch next ad and track view atomically:
-# export async function getNextAdAndTrackView() {
-#   const ads = await fetchActiveAds();
-#   if (ads.length === 0) return null;
-#   const ad = ads[Math.floor(Math.random() * ads.length)];
-#   
-#   // Increment views
-#   await updateDoc(doc(db, "ads", ad.id), {
-#     views: increment(1)
-#   });
-#   
-#   return {
-#     id: ad.id,
-#     url: ad.hls_url || ad.direct_url,
-#     views: (ad.views || 0) + 1,
-#     poster: ad.poster_url || null
-#   };
-# }
+```html
+<!-- ==================== ads.html ==================== -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Shortxx - Video Ads</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body, html {
+      width: 100%;
+      height: 100%;
+      background: #000;
+      overflow: hidden;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    #ad-wrapper {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: #000;
+    }
+    #ad-iframe {
+      width: 100%;
+      height: 100%;
+      border: none;
+      background: #000;
+    }
+    #ad-badge {
+      position: absolute;
+      top: 14px;
+      left: 14px;
+      z-index: 10;
+      background: rgba(0, 0, 0, 0.75);
+      color: #ff3b30;
+      font-size: 11px;
+      font-weight: 900;
+      letter-spacing: 1px;
+      padding: 4px 8px;
+      border-radius: 6px;
+      border: 1px solid rgba(255, 59, 48, 0.4);
+      pointer-events: none;
+    }
+    #ad-next-btn {
+      position: absolute;
+      bottom: 24px;
+      right: 20px;
+      z-index: 10;
+      background: rgba(220, 38, 38, 0.9);
+      color: #fff;
+      border: none;
+      padding: 10px 18px;
+      border-radius: 9999px;
+      font-size: 13px;
+      font-weight: 800;
+      cursor: pointer;
+      box-shadow: 0 4px 14px rgba(220, 38, 38, 0.4);
+      transition: transform 0.15s ease;
+    }
+    #ad-next-btn:active { transform: scale(0.94); }
+    #loading-spinner {
+      position: absolute;
+      color: #fff;
+      font-size: 13px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+  </style>
+</head>
+<body>
+  <div id="ad-wrapper">
+    <div id="ad-badge">SPONSORED AD</div>
+    <div id="loading-spinner">Loading ad...</div>
+    <iframe
+      id="ad-iframe"
+      src="about:blank"
+      frameborder="0"
+      width="100%"
+      height="100%"
+      scrolling="no"
+      allowfullscreen="allowfullscreen"
+      allow="autoplay; fullscreen"
+    ></iframe>
+    <button id="ad-next-btn" onclick="fetchAndDisplayNextAd()">Next Ad →</button>
+  </div>
 
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+    import {
+      getFirestore,
+      collection,
+      query,
+      where,
+      getDocs,
+      doc,
+      updateDoc,
+      increment
+    } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
-# --- REST API FETCH (ZERO FIREBASE SDK DEPENDENCY) ---
-# If your frontend doesn't use the Firebase client SDK, fetch active ads via REST:
-#
-# async function fetchActiveAdsREST() {
-#   const url = "https://firestore.googleapis.com/v1/projects/intense-augury-28gvj/databases/ai-studio-shortxxadmindash-86192a98-919e-436c-80b9-836d96e0e32b/documents:runQuery";
-#   const response = await fetch(url, {
-#     method: "POST",
-#     headers: { "Content-Type": "application/json" },
-#     body: JSON.stringify({
-#       structuredQuery: {
-#         from: [{ collectionId: "ads" }],
-#         where: {
-#           fieldFilter: {
-#             field: { fieldPath: "is_active" },
-#             op: "EQUAL",
-#             value: { booleanValue: true }
-#           }
-#         }
+    // 1. Initialize Firestore with Database ID
+    const firebaseConfig = {
+      projectId: "intense-augury-28gvj"
+    };
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app, "ai-studio-shortxxadmindash-86192a98-919e-436c-80b9-836d96e0e32b");
+
+    let adsCache = [];
+    let currentAdIndex = -1;
+
+    // 2. Fetch all active XVideos iframe ads from "ads" collection
+    async function loadAds() {
+      try {
+        const adsRef = collection(db, "ads");
+        const q = query(adsRef, where("is_active", "==", true));
+        const snapshot = await getDocs(q);
+
+        adsCache = snapshot.docs.map(d => ({
+          id: d.id,
+          ...d.data()
+        }));
+
+        if (adsCache.length > 0) {
+          fetchAndDisplayNextAd();
+        } else {
+          document.getElementById("loading-spinner").innerText = "No active ads available";
+        }
+      } catch (err) {
+        console.error("Error loading ads from Firestore:", err);
+        document.getElementById("loading-spinner").innerText = "Failed to load ads";
+      }
+    }
+
+    // 3. Display next ad iframe and increment views atomically
+    window.fetchAndDisplayNextAd = async function() {
+      if (adsCache.length === 0) return;
+
+      currentAdIndex = (currentAdIndex + 1) % adsCache.length;
+      const ad = adsCache[currentAdIndex];
+
+      const iframe = document.getElementById("ad-iframe");
+      const spinner = document.getElementById("loading-spinner");
+
+      spinner.style.display = "none";
+      iframe.src = ad.direct_url;
+
+      // Increment views atomically in Firestore "ads" collection
+      try {
+        await updateDoc(doc(db, "ads", ad.id), {
+          views: increment(1)
+        });
+      } catch (err) {
+        console.warn("Could not increment ad views:", err);
+      }
+    };
+
+    window.addEventListener("DOMContentLoaded", loadAds);
+  </script>
+</body>
+</html>
+```
+
+# ------------------------------------------------------------------------------
+# 4. REST API QUERY (IF NOT USING FIREBASE CLIENT SDK)
+# ------------------------------------------------------------------------------
+# POST https://firestore.googleapis.com/v1/projects/intense-augury-28gvj/databases/ai-studio-shortxxadmindash-86192a98-919e-436c-80b9-836d96e0e32b/documents:runQuery
+# Body:
+# {
+#   "structuredQuery": {
+#     "from": [{ "collectionId": "ads" }],
+#     "where": {
+#       "fieldFilter": {
+#         "field": { "fieldPath": "is_active" },
+#         "op": "EQUAL",
+#         "value": { "booleanValue": true }
 #       }
-#     })
-#   });
-#   const data = await response.json();
-#   return data
-#     .filter(item => item.document && item.document.fields)
-#     .map(item => {
-#       const docPath = item.document.name.split('/');
-#       const id = docPath[docPath.length - 1];
-#       const fields = item.document.fields;
-#       return {
-#         id,
-#         direct_url: fields.direct_url?.stringValue || '',
-#         hls_url: fields.hls_url?.stringValue || '',
-#         is_active: fields.is_active?.booleanValue ?? true,
-#         views: Number(fields.views?.integerValue || fields.views?.doubleValue || 0)
-#       };
-#     });
+#     }
+#   }
 # }
