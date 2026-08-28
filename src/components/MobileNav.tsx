@@ -1,10 +1,10 @@
 import React from 'react';
-import { Video, Megaphone } from 'lucide-react';
-import { NavigationTab, ThemeMode } from '../types';
+import { Video } from 'lucide-react';
+import { ThemeMode } from '../types';
 
 interface MobileNavProps {
-  activeTab: NavigationTab;
-  setActiveTab: (tab: NavigationTab) => void;
+  activeTab: 'videos';
+  setActiveTab: (tab: 'videos') => void;
   theme: ThemeMode;
 }
 
@@ -34,21 +34,7 @@ export const MobileNav: React.FC<MobileNavProps> = ({
         }`}
       >
         <Video className="w-5 h-5 mb-0.5" />
-        <span>Videos</span>
-      </button>
-
-      <button
-        onClick={() => setActiveTab('ads')}
-        className={`flex-1 flex flex-col items-center justify-center py-1.5 px-2 rounded-xl text-[11px] font-bold transition-all ${
-          activeTab === 'ads'
-            ? 'text-red-600 bg-red-950/30 font-extrabold'
-            : isDark
-            ? 'text-zinc-400 hover:text-white'
-            : 'text-zinc-500 hover:text-zinc-900'
-        }`}
-      >
-        <Megaphone className="w-5 h-5 mb-0.5" />
-        <span>Ads</span>
+        <span>Videos Manager</span>
       </button>
     </nav>
   );

@@ -9,15 +9,12 @@ import {
   X,
   ChevronLeft,
   ChevronRight,
-  Megaphone,
-  Tv,
 } from 'lucide-react';
 import { BrandLogo } from './LogosAndFlags';
-import { NavigationTab } from '../types';
 
 interface SidebarProps {
-  activeTab: NavigationTab;
-  setActiveTab: (tab: NavigationTab) => void;
+  activeTab: 'videos';
+  setActiveTab: (tab: 'videos') => void;
   firestoreConnected: boolean;
   isCollapsed: boolean;
   onToggleCollapse: () => void;
@@ -126,27 +123,6 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 <div className="flex items-center gap-2.5">
                   <Video className="w-4 h-4 flex-shrink-0 text-red-400" />
                   {(!isCollapsed || isMobileOpen) && <span>Videos</span>}
-                </div>
-              </button>
-
-              {/* Ads */}
-              <button
-                onClick={() => {
-                  setActiveTab('ads');
-                  if (onCloseMobile) onCloseMobile();
-                }}
-                title="Ads"
-                className={`w-full flex items-center ${
-                  isCollapsed && !isMobileOpen ? 'justify-center px-0 py-3' : 'justify-between px-3.5 py-2.5'
-                } rounded-xl text-xs font-bold transition-all ${
-                  activeTab === 'ads'
-                    ? 'bg-red-600 text-white shadow-md shadow-red-600/20'
-                    : 'text-zinc-400 hover:text-white hover:bg-zinc-900'
-                }`}
-              >
-                <div className="flex items-center gap-2.5">
-                  <Megaphone className="w-4 h-4 flex-shrink-0 text-red-400" />
-                  {(!isCollapsed || isMobileOpen) && <span>Ads</span>}
                 </div>
               </button>
             </nav>
