@@ -1,5 +1,5 @@
 import React from 'react';
-import { Video, Megaphone } from 'lucide-react';
+import { Video } from 'lucide-react';
 import { NavigationTab, ThemeMode } from '../types';
 
 interface MobileNavProps {
@@ -17,7 +17,7 @@ export const MobileNav: React.FC<MobileNavProps> = ({
 
   return (
     <nav
-      className={`fixed bottom-0 left-0 right-0 z-40 lg:hidden border-t px-2 py-2 flex items-center justify-around backdrop-blur-xl transition-colors ${
+      className={`fixed bottom-0 left-0 right-0 z-40 lg:hidden border-t px-4 py-2 flex items-center justify-around backdrop-blur-xl transition-colors ${
         isDark
           ? 'bg-black/90 border-zinc-800 text-white'
           : 'bg-white/90 border-zinc-200 text-zinc-900'
@@ -35,20 +35,6 @@ export const MobileNav: React.FC<MobileNavProps> = ({
       >
         <Video className="w-5 h-5 mb-0.5" />
         <span>Videos</span>
-      </button>
-
-      <button
-        onClick={() => setActiveTab('ads')}
-        className={`flex-1 flex flex-col items-center justify-center py-1.5 px-2 rounded-xl text-[11px] font-bold transition-all ${
-          activeTab === 'ads'
-            ? 'text-red-600 bg-red-950/30 font-extrabold'
-            : isDark
-            ? 'text-zinc-400 hover:text-white'
-            : 'text-zinc-500 hover:text-zinc-900'
-        }`}
-      >
-        <Megaphone className="w-5 h-5 mb-0.5" />
-        <span>Ads</span>
       </button>
     </nav>
   );

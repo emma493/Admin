@@ -21,11 +21,8 @@ export const Header: React.FC<HeaderProps> = ({
 }) => {
   const isDark = theme === 'dark';
 
-  const tabTitle = activeTab === 'ads' ? 'Video Ads Manager' : 'Videos Manager';
-  const tabDesc =
-    activeTab === 'ads'
-      ? 'Manage dedicated video ad streams, health verification, and view impressions'
-      : 'Manage video stream links, active status, and views count';
+  const tabTitle = 'Videos Manager';
+  const tabDesc = 'Manage video stream links, active status, and views count';
 
   return (
     <header

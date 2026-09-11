@@ -73,23 +73,6 @@
       },
       "required": ["direct_url", "is_active", "views"]
     },
-    "ads": {
-      "title": "Video Ad",
-      "description": "Video ad stream links and analytics",
-      "type": "object",
-      "properties": {
-        "page_url": { "type": "string" },
-        "direct_url": { "type": "string" },
-        "is_active": { "type": "boolean" },
-        "created_at": { "type": "string", "format": "date-time" },
-        "views": { "type": "number" },
-        "status": { "type": "string", "enum": ["processing", "ready", "failed"] },
-        "status_error": { "type": "string" },
-        "hls_url": { "type": "string" },
-        "poster_url": { "type": "string" }
-      },
-      "required": ["direct_url", "is_active", "views"]
-    },
     "daily_analytics": {
       "title": "Daily Analytics",
       "description": "Daily aggregated traffic analytics keyed by YYYY-MM-DD",
