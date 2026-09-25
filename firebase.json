@@ -7,7 +7,7 @@
     }
   ],
   "firestore": {
-    "database": "ai-studio-shortxxadmindash-86192a98-919e-436c-80b9-836d96e0e32b",
+    "database": "(default)",
     "rules": "firestore.rules",
     "indexes": "firestore.indexes.json"
   },

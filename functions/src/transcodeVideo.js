@@ -33,12 +33,11 @@ const { downloadWithGuardrails } = require('./download');
 const { runHlsTranscode, generatePoster } = require('./transcode');
 const { uploadDirectory, publicDownloadUrl } = require('./upload');
 
-// This project uses a named Firestore database, not "(default)" - both the
-// trigger registration below and the Admin SDK client inside the handler
-// have to target it explicitly, or the function will simply never fire.
-// Matches firebase-applet-config.json's `firestoreDatabaseId`.
-const DATABASE_ID = 'ai-studio-shortxxadmindash-86192a98-919e-436c-80b9-836d96e0e32b';
-const STORAGE_BUCKET = 'gen-lang-client-0947623046.firebasestorage.app';
+// This project uses the default Firestore database "(default)" and the
+// shortxx-live Storage bucket. `DATABASE_ID` stays explicit so a future
+// migration to a named database only touches this one constant.
+const DATABASE_ID = '(default)';
+const STORAGE_BUCKET = 'shortxx-live.firebasestorage.app';
 
 const MAX_DOWNLOAD_BYTES = 200 * 1024 * 1024; // 200MB - generous for a 10-30s clip
 const DOWNLOAD_TIMEOUT_MS = 120_000;

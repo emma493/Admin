@@ -41,12 +41,8 @@ setLogLevel('silent');
 // Initialize Firebase App
 const app = initializeApp(firebaseConfig);
 
-// Mandatory named Firestore database instance ID
-export const FIRESTORE_DATABASE_ID =
-  firebaseConfig.firestoreDatabaseId || 'ai-studio-shortxxadmindash-86192a98-919e-436c-80b9-836d96e0e32b';
-
-// Initialize Firestore targeting strictly the custom named Firestore database instance
-export const db = getFirestore(app, FIRESTORE_DATABASE_ID);
+// Default Firestore database instance (project: shortxx-live)
+export const db = getFirestore(app);
 
 // Collection References
 export const USERS_COLLECTION = 'users';

@@ -57,12 +57,10 @@ per-invocation compute + Storage, no separate video-CDN line item.
 
 ## Operational notes
 
-- **Named Firestore database**: this project's Firestore data does *not*
-  live in `(default)` - it's the database ID from
-  `firebase-applet-config.json` (`firestoreDatabaseId`). Both the trigger
-  registration and the Admin SDK client inside the function target that ID
-  explicitly (`DATABASE_ID` in `src/transcodeVideo.js`). If you ever
-  migrate to a different database, update that one constant.
+- **Default Firestore database**: this project's Firestore data lives in
+  `(default)` on `shortxx-live` (`DATABASE_ID` in `src/transcodeVideo.js`).
+  If you ever migrate to a named database, update that one constant (plus
+  the trigger registration, which targets it explicitly).
 - **Storage bucket**: also pinned explicitly (`STORAGE_BUCKET`) to the
   bucket in `firebase-applet-config.json`, rather than relying on the
   Admin SDK's "default bucket" inference.
@@ -94,6 +92,6 @@ per-invocation compute + Storage, no separate video-CDN line item.
 
 The Cloud Functions emulator can run this against a local Firestore/Storage
 emulator (`firebase emulators:start --only functions,firestore,storage`),
-but note the named-database + real-bucket wiring above means you'll want to
+but note the wiring above means you'll want to
 point `DATABASE_ID`/`STORAGE_BUCKET` at emulator equivalents (or just test
 against a real dev project) rather than assuming emulator defaults.

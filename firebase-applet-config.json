@@ -1,12 +1,9 @@
 {
-  "projectId": "intense-augury-28gvj",
-  "appId": "1:847124482953:web:35d42c09894f05891a2f58",
-  "apiKey": "AIzaSyALnYVISQIb6jNBU9Sds00GLQNhGQ3y4wk",
-  "authDomain": "intense-augury-28gvj.firebaseapp.com",
-  "firestoreDatabaseId": "ai-studio-shortxxadmindash-86192a98-919e-436c-80b9-836d96e0e32b",
-  "storageBucket": "intense-augury-28gvj.firebasestorage.app",
-  "messagingSenderId": "847124482953",
-  "measurementId": "",
-  "oAuthClientId": "847124482953-p89gkidnu9bvmogrl5enktfpehusq3tq.apps.googleusercontent.com",
-  "recaptchaSiteKey": ""
+  "projectId": "shortxx-live",
+  "appId": "1:820851084501:web:5965dc2eabf120f710265c",
+  "apiKey": "AIzaSyBQoIKWaWPKg8luwCjpN8LPaTd-43A1Vqo",
+  "authDomain": "shortxx-live.firebaseapp.com",
+  "storageBucket": "shortxx-live.firebasestorage.app",
+  "messagingSenderId": "820851084501",
+  "measurementId": "G-G211R5K286"
 }
