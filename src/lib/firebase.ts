@@ -40,9 +40,13 @@ setLogLevel('silent');
 
 // Initialize Firebase App
 const app = initializeApp(firebaseConfig);
+export { app };
 
 // Default Firestore database instance (project: shortxx-live)
 export const db = getFirestore(app);
+
+// Collection References
+export const CREATORS_COLLECTION = 'creators';
 
 // Collection References
 export const USERS_COLLECTION = 'users';
@@ -91,9 +95,9 @@ export function handleFirestoreError(error: unknown, operationType: OperationTyp
 
 /**
  * Subscribe in real-time to all users in Firestore
+ * NOTE (Admin rebuild 2026-09-25): auto-seed of demo users/analytics REMOVED.
+ * Fake seed data was polluting prod dashboards. This is now a pure listener.
  */
-let hasAttemptedSeed = false;
-
 export function subscribeToUsers(
   onData: (users: UserDocument[]) => void,
   onError?: (err: Error) => void
@@ -102,13 +106,6 @@ export function subscribeToUsers(
   return onSnapshot(
     usersRef,
     (snapshot) => {
-      if (snapshot.empty && !hasAttemptedSeed) {
-        hasAttemptedSeed = true;
-        seedDemoData().catch((err) => {
-          console.warn('Auto-seed notice:', err);
-        });
-      }
-
       const users: UserDocument[] = snapshot.docs.map((docSnap) => {
         const data = docSnap.data();
         return {
@@ -336,6 +333,11 @@ export function subscribeToVideos(
           is_active: typeof data.is_active === 'boolean' ? data.is_active : true,
           created_at: data.created_at || new Date(),
           views: typeof data.views === 'number' ? data.views : 0,
+          likes: typeof data.likes === 'number' ? data.likes : 0,
+          creatorId: data.creatorId || undefined,
+          category: data.category || undefined,
+          caption: data.caption || undefined,
+          hashtags: Array.isArray(data.hashtags) ? data.hashtags : undefined,
           // Populated by the transcodeVideo Cloud Function; undefined on
           // legacy docs or ones not yet picked up by the pipeline.
           status: data.status || undefined,
@@ -354,7 +356,10 @@ export function subscribeToVideos(
 }
 
 /**
- * Save or update a video document in Firestore
+ * Save or update a video document in Firestore.
+ * Uses merge:true and NEVER touches engagement/pipeline fields
+ * (likes, views increments, hls_url, poster_url, status) so Admin edits
+ * can't wipe public-site data (Session B contract).
  */
 export async function saveVideoDoc(videoData: Omit<VideoDocument, 'id'> & { id?: string }): Promise<string> {
   try {
@@ -373,6 +378,13 @@ export async function saveVideoDoc(videoData: Omit<VideoDocument, 'id'> & { id?:
       views: typeof videoData.views === 'number' ? videoData.views : 0,
       created_at: videoData.created_at ? videoData.created_at : serverTimestamp(),
     };
+
+    // Beta ownership/grouping — only written when provided, never wiped.
+    if (videoData.creatorId) payload.creatorId = videoData.creatorId;
+    if (videoData.category) payload.category = videoData.category;
+    // Beta SEO — caption string + hashtags array, merge-safe.
+    if (typeof videoData.caption === 'string' && videoData.caption) payload.caption = videoData.caption;
+    if (Array.isArray(videoData.hashtags) && videoData.hashtags.length > 0) payload.hashtags = videoData.hashtags;
 
     await setDoc(docRef, payload, { merge: true });
     return docRef.id;
@@ -405,6 +417,19 @@ export async function toggleVideoStatus(id: string, currentIsActive: boolean): P
   } catch (err) {
     handleFirestoreError(err, OperationType.UPDATE, `${VIDEOS_COLLECTION}/${id}`);
     throw err;
+  }
+}
+
+/**
+ * Atomic like increment on videos/{id}.likes (public site writes this too).
+ */
+export async function incrementVideoLikes(videoId: string): Promise<void> {
+  if (!videoId) return;
+  try {
+    const ref = doc(db, VIDEOS_COLLECTION, videoId);
+    await updateDoc(ref, { likes: increment(1) });
+  } catch (err) {
+    console.warn('Error incrementing video likes:', videoId, err);
   }
 }
 
@@ -470,10 +495,21 @@ export async function fetchNextVideoAndTrackView(excludeIds: string[] = []): Pro
 
     return {
       id: chosenId,
+      page_url: docData.page_url || docData.source_webpage || '',
+      source_webpage: docData.source_webpage || docData.page_url || '',
       direct_url: docData.direct_url || '',
       views: (typeof docData.views === 'number' ? docData.views : 0) + 1,
+      likes: typeof docData.likes === 'number' ? docData.likes : 0,
+      creatorId: docData.creatorId || undefined,
+      category: docData.category || undefined,
+      caption: docData.caption || undefined,
+      hashtags: Array.isArray(docData.hashtags) ? docData.hashtags : undefined,
       is_active: docData.is_active ?? true,
       created_at: docData.created_at || new Date(),
+      status: docData.status || undefined,
+      status_error: docData.status_error || undefined,
+      hls_url: docData.hls_url || undefined,
+      poster_url: docData.poster_url || undefined,
     };
   } catch (err) {
     console.error('Error in fetchNextVideoAndTrackView:', err);
@@ -881,8 +917,13 @@ export async function logPageViewEvent(
 
 /**
  * Seed initial realistic demo data if collection is empty
+ * DISABLED (Admin rebuild 2026-09-25): never auto-run in prod.
+ * Kept as a manual dev-only helper — call explicitly if you need fixtures.
  */
 export async function seedDemoData(): Promise<{ userCount: number }> {
+  console.warn('[seedDemoData] disabled in prod — no demo users/analytics will be written.');
+  return { userCount: 0 };
+  /* MANUAL-ONLY legacy body preserved below for local dev use:
   const sampleUsers: Array<Omit<UserDocument, 'id'>> = [
     {
       userId: 'GH2156790',
@@ -1105,4 +1146,5 @@ export async function seedDemoData(): Promise<{ userCount: number }> {
   });
 
   return { userCount: sampleUsers.length };
+  */
 }

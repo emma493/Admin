@@ -12,11 +12,29 @@ export default defineConfig(() => {
       },
     },
     server: {
-      // HMR is disabled in AI Studio via DISABLE_HMR env var.
-      // Do not modifyâfile watching is disabled to prevent flickering during agent edits.
-      hmr: process.env.DISABLE_HMR !== 'true',
-      // Disable file watching when DISABLE_HMR is true to save CPU during agent edits.
-      watch: process.env.DISABLE_HMR === 'true' ? null : {},
+      // Netlify serves the static dist/ output; local dev uses plain Vite HMR.
+      hmr: true,
+      fs: {
+        // Local-only: parent path has `~` + space (`PICS ~Pictures`) which
+        // breaks Vite's strict allowlist comparison even when the same path
+        // is listed — disable strict check for `npm run dev`.
+        // Production `npm run build` -> Netlify is unaffected.
+        strict: false,
+      },
+    },
+    build: {
+      // Split the ~600kB single chunk so browser caches vendor bundles
+      // separately and the app shell renders without waiting on Firebase.
+      chunkSizeWarningLimit: 900,
+      rollupOptions: {
+        output: {
+          manualChunks: {
+            firebase: ['firebase/app', 'firebase/firestore', 'firebase/storage'],
+            vendor: ['react', 'react-dom', 'react-router-dom'],
+            forms: ['react-hook-form', 'zod', '@hookform/resolvers'],
+          },
+        },
+      },
     },
   };
 });

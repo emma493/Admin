@@ -14,6 +14,13 @@ service firebase.storage {
       allow write: if false;
     }
 
+    // Beta creator avatars uploaded from the Admin dashboard (no auth,
+    // same open pattern as firestore.rules). Public read for playback pages.
+    match /creators/{allPaths=**} {
+      allow read: if true;
+      allow write: if true;
+    }
+
     match /{allPaths=**} {
       allow read, write: if false;
     }

@@ -1,175 +1,121 @@
 /**
- * @license
- * SPDX-License-Identifier: Apache-2.0
+ * Shortxx Admin — Beta rebuild.
+ *
+ * CORE LOGIC KEPT (do not delete):
+ * - src/lib/firebase.ts — Firestore CRUD + subscriptions
+ * - src/lib/creators.ts — creators collection + avatar Storage upload
+ * - src/lib/videoUtils.ts — extractLinksFromString, verifyVideoLink
+ * - src/lib/utils.ts — formatters, date-range helpers
+ * - src/types.ts — VideoDocument, CreatorDocument, TelemetryEvent, Analytics
+ * - firebase-applet-config.json, firestore.rules, storage.rules,
+ *   functions/src/transcodeVideo.js pipeline
+ *
+ * Beta palette (uniform, from shortxx.live side menu):
+ * app #0F1014 · sidebar #16171D · surface #1E1F27 · accent #FF2B55
  */
 
-import React, { useState, useEffect } from 'react';
-import {
-  subscribeToVideos,
-  subscribeToTotalViews,
-  subscribeTo24hVideoViews,
-  saveVideoDoc,
-  deleteVideoDoc,
-  toggleVideoStatus,
-  subscribeToEvents,
-  incrementVideoViews,
-  fetchNextVideoAndTrackView,
-  logTelemetryEvent,
-} from './lib/firebase';
-import {
-  VideoDocument,
-  NavigationTab,
-  ThemeMode,
-  TelemetryEventDocument,
-} from './types';
-import { Sidebar } from './components/Sidebar';
-import { Header } from './components/Header';
-import { VideosTab } from './components/VideosTab';
-import { MobileNav } from './components/MobileNav';
+import { Suspense, lazy, useState } from 'react';
+import { BrowserRouter, NavLink, Route, Routes } from 'react-router-dom';
+import { LayoutDashboard, LogOut, UploadCloud, Users, Clapperboard } from 'lucide-react';
+import { db } from './lib/firebase';
+import { isAuthed, logout } from './lib/auth';
+import Sidebar from './components/Sidebar';
+
+// Lazy routes — app shell + login render without waiting on page bundles.
+const DashboardPage = lazy(() => import('./pages/DashboardPage'));
+const CreatorsPage = lazy(() => import('./pages/CreatorsPage'));
+const VideosPage = lazy(() => import('./pages/VideosPage'));
+const UploadPage = lazy(() => import('./pages/UploadPage'));
+const LoginPage = lazy(() => import('./pages/LoginPage'));
+
+function PageFallback() {
+  return (
+    <div className="rounded-[14px] min-h-[240px] animate-pulse" style={{ background: '#1E1F27' }} />
+  );
+}
+
+// Reference db so the Firebase wiring stays compiled in the build.
+void db;
 
 export default function App() {
-  const [activeTab, setActiveTab] = useState<NavigationTab>('videos');
-  const [theme, setTheme] = useState<ThemeMode>('dark');
-  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState<boolean>(false);
-  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState<boolean>(false);
+  const [authed, setAuthed] = useState(() => isAuthed());
 
-  // Real-time Firestore Videos State
-  const [videos, setVideos] = useState<VideoDocument[]>([]);
-  const [events, setEvents] = useState<TelemetryEventDocument[]>([]);
-  const [totalViews, setTotalViews] = useState<number>(0);
-  const [views24h, setViews24h] = useState<number>(0);
-
-  const [firestoreConnected, setFirestoreConnected] = useState<boolean>(false);
-
-  const toggleTheme = () => {
-    setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
-  };
-
-  const toggleSidebar = () => {
-    setIsSidebarCollapsed((prev) => !prev);
-  };
-
-  const toggleMobileMenu = () => {
-    setIsMobileMenuOpen((prev) => !prev);
-  };
-
-  // Bind global ShortxxTrackerAPI for client-side scripts (tracking.js / user sites)
-  useEffect(() => {
-    (window as any).ShortxxTrackerAPI = {
-      logEvent: async (payload: any) => {
-        if (payload.video_id) {
-          await incrementVideoViews(payload.video_id);
-        }
-        return logTelemetryEvent(payload);
-      },
-      incrementVideoViews: async (videoId: string) => {
-        return incrementVideoViews(videoId);
-      },
-      fetchNextVideoAndTrackView,
-    };
-  }, []);
-
-  // Subscribe to Real Firestore Videos Collection
-  useEffect(() => {
-    const unsubscribeVideos = subscribeToVideos(
-      (list) => {
-        setVideos(list);
-        setFirestoreConnected(true);
-      },
-      (err) => {
-        console.error('Videos subscription error:', err);
-        setFirestoreConnected(false);
-      }
+  if (!authed) {
+    return (
+      <Suspense fallback={<div className="min-h-screen" style={{ background: '#0F1014' }} />}>
+        <LoginPage onAuthed={() => setAuthed(true)} />
+      </Suspense>
     );
-
-    return () => unsubscribeVideos();
-  }, []);
-
-  // Subscribe to Real Firestore Total Video Views Sum Aggregation
-  useEffect(() => {
-    const unsubscribeTotalViews = subscribeToTotalViews((count) => {
-      setTotalViews(count);
-    });
-
-    return () => unsubscribeTotalViews();
-  }, []);
-
-  // Subscribe to Real Firestore 24H Video Views Rolling Window
-  useEffect(() => {
-    const unsubscribe24hViews = subscribeTo24hVideoViews((count) => {
-      setViews24h(count);
-    });
-
-    return () => unsubscribe24hViews();
-  }, []);
-
-  // Subscribe to Real Firestore Telemetry Events Collection (for stream views metric sync)
-  useEffect(() => {
-    const unsubscribeEvents = subscribeToEvents((list) => {
-      setEvents(list);
-    });
-
-    return () => unsubscribeEvents();
-  }, []);
-
-  const isDark = theme === 'dark';
+  }
 
   return (
-    <div
-      className={`min-h-screen flex flex-col lg:flex-row font-sans antialiased selection:bg-red-600 selection:text-white transition-colors duration-200 ${
-        isDark ? 'bg-black text-zinc-100' : 'bg-zinc-100 text-zinc-900'
-      }`}
-    >
-      {/* SIDEBAR NAVIGATION (Desktop & Mobile Drawer) */}
-      <Sidebar
-        activeTab={activeTab}
-        setActiveTab={setActiveTab}
-        firestoreConnected={firestoreConnected}
-        isCollapsed={isSidebarCollapsed}
-        onToggleCollapse={toggleSidebar}
-        isMobileOpen={isMobileMenuOpen}
-        onCloseMobile={() => setIsMobileMenuOpen(false)}
-      />
-
-      {/* MAIN CONTENT AREA */}
-      <div className="flex-1 flex flex-col min-w-0">
-        {/* HEADER BAR */}
-        <Header
-          activeTab={activeTab}
-          theme={theme}
-          onToggleTheme={toggleTheme}
-          firestoreConnected={firestoreConnected}
-          onToggleMobileMenu={toggleMobileMenu}
-          isMobileMenuOpen={isMobileMenuOpen}
+    <BrowserRouter>
+      <div className="min-h-screen flex" style={{ background: '#0F1014' }}>
+        <Sidebar
+          onLogout={() => {
+            logout();
+            setAuthed(false);
+          }}
         />
-
-        {/* CONTAINER BODY */}
-        <main className="flex-1 p-3.5 sm:p-6 lg:p-8 pb-24 lg:pb-8 space-y-6 max-w-7xl w-full mx-auto">
-          <VideosTab
-            videos={videos}
-            events={events}
-            realtimeTotalViews={totalViews}
-            realtimeViews24h={views24h}
-            onSaveVideo={async (data) => {
-              await saveVideoDoc(data);
-            }}
-            onDeleteVideo={async (id) => {
-              await deleteVideoDoc(id);
-            }}
-            onToggleVideoStatus={async (id, currentIsActive) => {
-              await toggleVideoStatus(id, currentIsActive);
-            }}
-            theme={theme}
-          />
-        </main>
+        <div className="flex-1 min-w-0">
+          <div className="lg:hidden flex items-center gap-2 px-4 py-3" style={{ background: '#16171D', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+            <span className="text-white font-black mr-2">Shortxx</span>
+            <NavLink
+              to="/"
+              end
+              className={({ isActive }) =>
+                `flex items-center gap-1.5 px-3 py-2 rounded-[8px] text-[13px] font-bold no-underline ${isActive ? 'text-white bg-[#FF2B55]/[0.14]' : 'text-[#A1A2A7]'}`
+              }
+            >
+              <LayoutDashboard size={15} /> Dashboard
+            </NavLink>
+            <NavLink
+              to="/creators"
+              className={({ isActive }) =>
+                `flex items-center gap-1.5 px-3 py-2 rounded-[8px] text-[13px] font-bold no-underline ${isActive ? 'text-white bg-[#FF2B55]/[0.14]' : 'text-[#A1A2A7]'}`
+              }
+            >
+              <Users size={15} /> Creators
+            </NavLink>
+            <NavLink
+              to="/videos"
+              className={({ isActive }) =>
+                `flex items-center gap-1.5 px-3 py-2 rounded-[8px] text-[13px] font-bold no-underline ${isActive ? 'text-white bg-[#FF2B55]/[0.14]' : 'text-[#A1A2A7]'}`
+              }
+            >
+              <Clapperboard size={15} /> Videos
+            </NavLink>
+            <NavLink
+              to="/upload"
+              className={({ isActive }) =>
+                `flex items-center gap-1.5 px-3 py-2 rounded-[8px] text-[13px] font-bold no-underline ${isActive ? 'text-white bg-[#FF2B55]/[0.14]' : 'text-[#A1A2A7]'}`
+              }
+            >
+              <UploadCloud size={15} /> Upload
+            </NavLink>
+            <button
+              onClick={() => {
+                logout();
+                setAuthed(false);
+              }}
+              aria-label="Sign out"
+              className="ml-auto flex items-center gap-1.5 px-3 py-2 rounded-[8px] text-[13px] font-bold text-[#A1A2A7]"
+            >
+              <LogOut size={15} /> Sign out
+            </button>
+          </div>
+          <main className="p-4 sm:p-6 lg:p-8 max-w-6xl mx-auto w-full">
+            <Suspense fallback={<PageFallback />}>
+              <Routes>
+                <Route path="/" element={<DashboardPage />} />
+                <Route path="/creators" element={<CreatorsPage />} />
+                <Route path="/videos" element={<VideosPage />} />
+                <Route path="/upload" element={<UploadPage />} />
+              </Routes>
+            </Suspense>
+          </main>
+        </div>
       </div>
-
-      {/* MOBILE BOTTOM NAVIGATION */}
-      <MobileNav
-        activeTab={activeTab}
-        setActiveTab={setActiveTab}
-        theme={theme}
-      />
-    </div>
+    </BrowserRouter>
   );
 }

@@ -25,16 +25,37 @@ export type NotificationStatus = 'active' | 'paused';
 
 export type VideoTranscodeStatus = 'processing' | 'ready' | 'failed';
 
-export type NavigationTab = 'videos';
+export type NavigationTab = 'videos' | 'analytics' | 'pipeline';
+
+export interface CreatorDocument {
+  id: string;
+  username: string;
+  avatarUrl?: string;
+  is_active?: boolean;
+  created_at: Timestamp | Date | number | any;
+}
+
+export type VideoCategory = 'girls' | 'couples';
 
 export interface VideoDocument {
   id: string;
   page_url?: string;
   source_webpage?: string;
   direct_url: string;
+  // Beta: which creator owns this video + which group it belongs to.
+  // Optional so legacy docs (pre-Beta) keep working on the public site.
+  creatorId?: string;
+  category?: VideoCategory;
+  // Beta SEO: AI-suggested caption + hashtags (Session B reads these for
+  // on-play display + hashtag/caption search). Optional, merge-safe.
+  caption?: string;
+  hashtags?: string[];
   is_active: boolean;
   created_at: Timestamp | Date | number | any;
   views: number;
+  // Engagement fields written by public site (shortxx.live Session B).
+  // Optional + merge-safe: Admin must never overwrite/reset these.
+  likes?: number;
   // Adaptive HLS pipeline fields (written by the transcodeVideo Cloud Function,
   // never set directly from the admin dashboard). Absent on legacy docs that
   // haven't been picked up by the pipeline yet - always treat as optional.

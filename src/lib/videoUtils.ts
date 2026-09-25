@@ -68,7 +68,11 @@ export interface LinkHealthResult {
 
 /**
  * Verify if a video stream link is playable/accessible.
- * Uses a combination of fetch network probe and HTMLVideoElement media test.
+ * Rebuilt 2026-09-25: old HEAD no-cors probe ALWAYS resolved "healthy"
+ * (opaque response), so broken links were never caught. New order:
+ * 1) HTMLVideoElement metadata probe (real decode test, catches 404s),
+ * 2) fetch Range GET fallback (catches CORS-blocked-but-alive hosts as
+ *    "unreachable", not "healthy").
  */
 export async function verifyVideoLink(
   url: string,
@@ -97,48 +101,58 @@ export async function verifyVideoLink(
 
     // Timeout safety fallback
     const timer = setTimeout(() => {
-      // If network is slow or CORS blocks, check via video element or fetch
       finish('unreachable', 'Connection timeout (6s)');
     }, timeoutMs);
 
-    // 1. Try standard fetch HEAD or GET request first
-    fetch(url, { method: 'HEAD', mode: 'no-cors' })
-      .then(() => {
-        // In no-cors mode, opaque response means the server responded!
-        clearTimeout(timer);
-        finish('healthy');
-      })
-      .catch(() => {
-        // Fallback: Test via HTMLVideoElement probe in memory
-        const video = document.createElement('video');
-        video.preload = 'metadata';
-        video.src = url;
+    // 1. Primary: HTMLVideoElement metadata probe (real playback test)
+    const video = document.createElement('video');
+    video.preload = 'metadata';
+    video.muted = true;
+    // @ts-ignore - playsInline for iOS probe
+    video.playsInline = true;
 
-        const onCanPlay = () => {
-          cleanup();
-          finish('healthy');
-        };
+    const cleanup = () => {
+      clearTimeout(timer);
+      video.removeEventListener('loadedmetadata', onCanPlay);
+      video.removeEventListener('canplay', onCanPlay);
+      video.removeEventListener('error', onError);
+      video.removeAttribute('src');
+      try { video.load(); } catch (_) { /* noop */ }
+    };
 
-        const onError = () => {
-          cleanup();
+    const onCanPlay = () => {
+      cleanup();
+      finish('healthy');
+    };
+
+    const onError = () => {
+      cleanup();
+      // 2. Fallback: Range GET — distinguishes dead hosts (broken)
+      // from CORS-blocked-but-alive hosts (unreachable, not healthy).
+      fetch(url, { method: 'GET', headers: { Range: 'bytes=0-0' } })
+        .then((res) => {
+          if (res.ok || res.status === 206 || res.status === 200) {
+            finish('unreachable', 'Host alive but blocked media probe (CORS?)');
+          } else if (res.status === 404 || res.status === 410) {
+            finish('broken', `HTTP ${res.status} — stream not found`, res.status);
+          } else {
+            finish('broken', `HTTP ${res.status} — stream failed`, res.status);
+          }
+        })
+        .catch(() => {
           finish('broken', 'Video stream failed to load or decode');
-        };
+        });
+    };
 
-        const cleanup = () => {
-          clearTimeout(timer);
-          video.removeEventListener('loadedmetadata', onCanPlay);
-          video.removeEventListener('canplay', onCanPlay);
-          video.removeEventListener('error', onError);
-          video.removeAttribute('src');
-          video.load();
-        };
+    video.addEventListener('loadedmetadata', onCanPlay);
+    video.addEventListener('canplay', onCanPlay);
+    video.addEventListener('error', onError);
 
-        video.addEventListener('loadedmetadata', onCanPlay);
-        video.addEventListener('canplay', onCanPlay);
-        video.addEventListener('error', onError);
-
-        // Trigger load
-        video.load();
-      });
+    video.src = url;
+    try {
+      video.load();
+    } catch (_) {
+      onError();
+    }
   });
 }

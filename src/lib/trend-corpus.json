@@ -1,0 +1,79 @@
+{
+  "_note": "MANUAL TREND CORPUS — this is how YOU make the AI powerful. Browse the top posts on the reference sites (see TREND_SOURCES in captionAI.ts), copy the best captions + hashtag sets, and paste them below. Engine picks these FIRST (weighted), seed banks are fallback. Restart dev after saving. Keep captions brief, no explicit terms.",
+  "_schema": "{ caption: string (<=120 chars), hashtags: string[] (each starting with #), weight: 1-3 (3 = top performer, shown more often) }",
+  "_crawl_note": "2026-09-25 crawl pulled 238 raw titles but they are explicit scene titles, unusable as on-play captions — reverted. 2026-09-25 big run (trend_crawler.py): 1531 unique titles, reddit contributed real TikTok-voice captions — 12 clean hook-style winners curated below (weight 3), rest rejected as too explicit. Crawl value = keyword mining for hashtag banks (see captionAI.ts). Raw data kept in tools/trend-corpus.crawled.json for mining only.",
+  "girls": [
+    {
+      "caption": "POV: she understood the assignment",
+      "hashtags": ["#fyp", "#viral", "#dance", "#shortxx"],
+      "weight": 2
+    },
+    {
+      "caption": "Be honest, do you prefer it before or after?",
+      "hashtags": ["#fyp", "#viral", "#pov", "#shortxx"],
+      "weight": 3
+    },
+    {
+      "caption": "You were watching? Pervert.",
+      "hashtags": ["#fyp", "#viral", "#pov", "#shortxx"],
+      "weight": 3
+    },
+    {
+      "caption": "Wait for it papi",
+      "hashtags": ["#fyp", "#trending", "#pov", "#shortxx"],
+      "weight": 3
+    },
+    {
+      "caption": "A worthy figure for you?",
+      "hashtags": ["#fyp", "#fitcheck", "#beauty", "#shortxx"],
+      "weight": 3
+    },
+    {
+      "caption": "Do you like this view or not really?",
+      "hashtags": ["#fyp", "#viral", "#pov", "#shortxx"],
+      "weight": 3
+    },
+    {
+      "caption": "Hopping on the trend",
+      "hashtags": ["#fyp", "#trending", "#dance", "#shortxx"],
+      "weight": 3
+    },
+    {
+      "caption": "POV: it's my first day as an electrician",
+      "hashtags": ["#fyp", "#viral", "#pov", "#shortxx"],
+      "weight": 3
+    },
+    {
+      "caption": "I feel like someone's watching me",
+      "hashtags": ["#fyp", "#viral", "#pov", "#shortxx"],
+      "weight": 3
+    },
+    {
+      "caption": "What's your honest opinion?",
+      "hashtags": ["#fyp", "#trending", "#pov", "#shortxx"],
+      "weight": 3
+    },
+    {
+      "caption": "Feeling cute, might delete later, but you can watch first",
+      "hashtags": ["#fyp", "#viral", "#beauty", "#shortxx"],
+      "weight": 3
+    },
+    {
+      "caption": "I know you'll watch every second",
+      "hashtags": ["#fyp", "#viral", "#trending", "#shortxx"],
+      "weight": 3
+    },
+    {
+      "caption": "If you're watching, don't blink",
+      "hashtags": ["#fyp", "#trending", "#transition", "#shortxx"],
+      "weight": 3
+    }
+  ],
+  "couples": [
+    {
+      "caption": "POV: couple goals unlocked",
+      "hashtags": ["#fyp", "#couples", "#couplegoals", "#shortxx"],
+      "weight": 2
+    }
+  ]
+}
