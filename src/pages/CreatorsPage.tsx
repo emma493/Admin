@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef, useState } from 'react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -9,7 +9,8 @@ import {
   deleteCreatorDoc,
   uploadCreatorAvatar,
 } from '../lib/creators';
-import type { CreatorDocument } from '../types';
+import { subscribeToVideos } from '../lib/firebase';
+import type { CreatorDocument, VideoDocument } from '../types';
 import SUGGESTED_USERNAMES from '../lib/suggested-usernames.json';
 
 const schema = z.object({
@@ -52,12 +53,30 @@ function friendlySaveError(e: unknown): string {
   return msg;
 }
 
+// Category badge derived from the creator's videos (category lives on video
+// docs, not creator docs). Only Girls and Couples creators exist, so the
+// badge is binary: majority wins, exact ties read as Girls. Creators with no
+// categorized videos yet get no badge.
+type CreatorBadge = 'Girls' | 'Couples' | null;
+
+function badgeFor(girls: number, couples: number): CreatorBadge {
+  if (girls === 0 && couples === 0) return null;
+  return girls >= couples ? 'Girls' : 'Couples';
+}
+
+const BADGE_STYLE: Record<Exclude<CreatorBadge, null>, { background: string; color: string }> = {
+  Girls: { background: 'rgba(255,43,85,0.12)', color: '#ff8fa3' },
+  Couples: { background: 'rgba(168,85,247,0.15)', color: '#c4b5fd' },
+};
+
 // Memoized card — adding/deleting one creator no longer re-renders every card.
 const CreatorCard = memo(function CreatorCard({
   c,
+  badge,
   onEdit,
 }: {
   c: CreatorDocument;
+  badge: CreatorBadge;
   onEdit: (c: CreatorDocument) => void;
 }) {
   return (
@@ -81,7 +100,18 @@ const CreatorCard = memo(function CreatorCard({
         </div>
       )}
       <div className="min-w-0 flex-1">
-        <div className="text-white text-[15px] font-bold truncate">@{c.username}</div>
+        <div className="text-white text-[15px] font-bold truncate flex items-center gap-2">
+          <span className="truncate">@{c.username}</span>
+          {badge && (
+            <span
+              className="text-[11px] font-black uppercase tracking-[0.1em] px-2 py-0.5 rounded-full shrink-0"
+              style={BADGE_STYLE[badge]}
+              title={`${badge} — from this creator's video categories`}
+            >
+              {badge}
+            </span>
+          )}
+        </div>
         <div className="text-[#8A8B91] text-[12px]">Joined {formatDate(c.created_at)}</div>
       </div>
       <button
@@ -104,6 +134,7 @@ const CreatorCard = memo(function CreatorCard({
 
 export default function CreatorsPage() {
   const [creators, setCreators] = useState<CreatorDocument[]>([]);
+  const [videos, setVideos] = useState<VideoDocument[]>([]);
   const [connected, setConnected] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -139,15 +170,34 @@ export default function CreatorsPage() {
     : [];
 
   useEffect(() => {
-    const unsub = subscribeToCreators(
-      (list) => {
-        setCreators(list);
-        setConnected(true);
-      },
-      () => setConnected(false)
-    );
-    return () => unsub();
+    const unsubs = [
+      subscribeToCreators(
+        (list) => {
+          setCreators(list);
+          setConnected(true);
+        },
+        () => setConnected(false)
+      ),
+      subscribeToVideos((list) => setVideos(list)),
+    ];
+    return () => unsubs.forEach((u) => u());
   }, []);
+
+  // Per-creator category counts from linked videos (videos carry creatorId).
+  const badgeByCreator = useMemo(() => {
+    const counts = new Map<string, { girls: number; couples: number }>();
+    for (const v of videos) {
+      if (!v.creatorId) continue;
+      if (v.category !== 'girls' && v.category !== 'couples') continue;
+      const cur = counts.get(v.creatorId) ?? { girls: 0, couples: 0 };
+      if (v.category === 'girls') cur.girls += 1;
+      else cur.couples += 1;
+      counts.set(v.creatorId, cur);
+    }
+    const out = new Map<string, CreatorBadge>();
+    counts.forEach((c, id) => out.set(id, badgeFor(c.girls, c.couples)));
+    return out;
+  }, [videos]);
 
   useEffect(() => {
     if (file) {
@@ -313,7 +363,7 @@ export default function CreatorsPage() {
 
       <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
         {creators.map((c) => (
-          <CreatorCard key={c.id} c={c} onEdit={startEdit} />
+          <CreatorCard key={c.id} c={c} badge={badgeByCreator.get(c.id) ?? null} onEdit={startEdit} />
         ))}
       </div>
 
