@@ -43,6 +43,9 @@ export interface CreatorDocument {
   username: string;
   avatarUrl?: string;
   is_active?: boolean;
+  // Owner-chosen group (Girls/Couples), set on the Creators page form.
+  // Optional so legacy docs keep working; badge falls back to video majority.
+  category?: VideoCategory;
   created_at: Timestamp | Date | number | any;
 }
 

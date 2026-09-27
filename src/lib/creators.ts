@@ -27,6 +27,7 @@ export function subscribeToCreators(
           username: data.username || 'Unnamed',
           avatarUrl: data.avatarUrl || '',
           is_active: typeof data.is_active === 'boolean' ? data.is_active : true,
+          category: data.category === 'girls' || data.category === 'couples' ? data.category : undefined,
           created_at: data.created_at || new Date(),
         };
       });
@@ -55,6 +56,7 @@ export async function saveCreatorDoc(data: {
   id?: string;
   username: string;
   avatarUrl?: string;
+  category?: 'girls' | 'couples';
 }): Promise<string> {
   const username = data.username.trim();
   if (!username) throw new Error('Username is required');
@@ -66,6 +68,10 @@ export async function saveCreatorDoc(data: {
     avatarUrl: data.avatarUrl || '',
     is_active: true,
   };
+  // Only written when explicitly chosen — legacy docs without a group stay untouched.
+  if (data.category === 'girls' || data.category === 'couples') {
+    payload.category = data.category;
+  }
   // Only stamp created_at on create — edits must not reset the join date.
   if (!data.id) {
     payload.created_at = serverTimestamp();

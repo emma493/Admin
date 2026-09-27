@@ -10,7 +10,7 @@ import {
   uploadCreatorAvatar,
 } from '../lib/creators';
 import { subscribeToVideos } from '../lib/firebase';
-import type { CreatorDocument, VideoDocument } from '../types';
+import type { CreatorDocument, VideoCategory, VideoDocument } from '../types';
 import SUGGESTED_USERNAMES from '../lib/suggested-usernames.json';
 
 const schema = z.object({
@@ -106,7 +106,7 @@ const CreatorCard = memo(function CreatorCard({
             <span
               className="text-[11px] font-black uppercase tracking-[0.1em] px-2 py-0.5 rounded-full shrink-0"
               style={BADGE_STYLE[badge]}
-              title={`${badge} — from this creator's video categories`}
+              title={`${badge} group`}
             >
               {badge}
             </span>
@@ -141,6 +141,7 @@ export default function CreatorsPage() {
   const [saving, setSaving] = useState(false);
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState('');
+  const [category, setCategory] = useState<VideoCategory>('girls');
   const [error, setError] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -216,13 +217,15 @@ export default function CreatorsPage() {
         id: editingId ?? undefined,
         username: values.username,
         avatarUrl: values.avatarUrl?.trim() || '',
+        category,
       });
       if (file) {
         const downloadUrl = await uploadCreatorAvatar(file, id);
-        await saveCreatorDoc({ id, username: values.username, avatarUrl: downloadUrl });
+        await saveCreatorDoc({ id, username: values.username, avatarUrl: downloadUrl, category });
       }
       reset();
       setFile(null);
+      setCategory('girls');
       setShowForm(false);
       setEditingId(null);
     } catch (e) {
@@ -236,6 +239,7 @@ export default function CreatorsPage() {
     setEditingId(c.id);
     setFile(null);
     setError('');
+    setCategory(c.category === 'couples' ? 'couples' : 'girls');
     setValue('username', c.username, { shouldValidate: true });
     setValue('avatarUrl', c.avatarUrl ?? '', { shouldValidate: true });
     setPreview(c.avatarUrl ?? '');
@@ -246,6 +250,7 @@ export default function CreatorsPage() {
     setShowForm(false);
     setEditingId(null);
     setFile(null);
+    setCategory('girls');
     setError('');
     reset();
   };
@@ -335,6 +340,30 @@ export default function CreatorsPage() {
                 Real scraped nuditok handles — open nuditok.com/@name and confirm girl 18+ before creating.
               </p>
             </label>
+            <div className="grid gap-1.5">
+              <span className="text-[#E1E2E6] text-[13px] font-bold">Group</span>
+              <div className="flex gap-2" role="radiogroup" aria-label="Creator group">
+                {(['girls', 'couples'] as VideoCategory[]).map((g) => (
+                  <button
+                    key={g}
+                    type="button"
+                    role="radio"
+                    aria-checked={category === g}
+                    onClick={() => setCategory(g)}
+                    className="px-4 py-2 rounded-[10px] text-[13px] font-bold capitalize transition-colors"
+                    style={
+                      category === g
+                        ? g === 'couples'
+                          ? { background: 'rgba(168,85,247,0.15)', color: '#c4b5fd', border: '1px solid rgba(168,85,247,0.5)' }
+                          : { background: 'rgba(255,43,85,0.12)', color: '#ff8fa3', border: '1px solid rgba(255,43,85,0.5)' }
+                        : { background: '#16171D', color: '#8A8B91', border: '1px solid rgba(255,255,255,0.1)' }
+                    }
+                  >
+                    {g}
+                  </button>
+                ))}
+              </div>
+            </div>
             <label className="grid gap-1.5">
               <span className="text-[#E1E2E6] text-[13px] font-bold">Image URL <span className="text-[#8A8B91] font-semibold">(or upload a picture)</span></span>
               <input
@@ -363,7 +392,18 @@ export default function CreatorsPage() {
 
       <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
         {creators.map((c) => (
-          <CreatorCard key={c.id} c={c} badge={badgeByCreator.get(c.id) ?? null} onEdit={startEdit} />
+          <CreatorCard
+            key={c.id}
+            c={c}
+            badge={
+              c.category === 'girls'
+                ? 'Girls'
+                : c.category === 'couples'
+                  ? 'Couples'
+                  : (badgeByCreator.get(c.id) ?? null)
+            }
+            onEdit={startEdit}
+          />
         ))}
       </div>
 
