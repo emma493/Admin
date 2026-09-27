@@ -10,10 +10,12 @@ const surface = { background: '#1E1F27', border: '1px solid rgba(255,255,255,0.0
 
 const CreatorPick = memo(function CreatorPick({
   c,
+  badge,
   selected,
   onToggle,
 }: {
   c: CreatorDocument;
+  badge: 'Girls' | 'Couples' | null;
   selected: boolean;
   onToggle: (id: string) => void;
 }) {
@@ -40,6 +42,19 @@ const CreatorPick = memo(function CreatorPick({
         </div>
       )}
       <span className="text-white text-[14px] font-bold truncate">@{c.username}</span>
+      {badge && (
+        <span
+          className="text-[11px] font-black uppercase tracking-[0.1em] px-2 py-0.5 rounded-full shrink-0"
+          style={
+            badge === 'Couples'
+              ? { background: 'rgba(168,85,247,0.15)', color: '#c4b5fd' }
+              : { background: 'rgba(255,43,85,0.12)', color: '#ff8fa3' }
+          }
+          title={`${badge} group`}
+        >
+          {badge}
+        </span>
+      )}
       <span
         className="ml-auto w-4 h-4 rounded-full shrink-0"
         style={
@@ -72,6 +87,18 @@ export default function UploadPage() {
 
   const perCreator = selected.length > 0 ? Math.ceil(links.length / selected.length) : 0;
   const canSubmit = !busy && selected.length > 0 && links.length > 0;
+
+  const groupOf = (c: CreatorDocument): 'Girls' | 'Couples' | null =>
+    c.category === 'girls' ? 'Girls' : c.category === 'couples' ? 'Couples' : null;
+
+  // Warn-only mismatch guard: batch group vs each selected creator's group.
+  const mismatched = selected
+    .map((id) => creators.find((c) => c.id === id))
+    .filter((c): c is CreatorDocument => !!c)
+    .filter((c) => {
+      const g = groupOf(c);
+      return g !== null && g.toLowerCase() !== category;
+    });
 
   const onSubmit = async () => {
     if (!canSubmit) return;
@@ -140,9 +167,15 @@ export default function UploadPage() {
           ) : (
             <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
               {creators.map((c) => (
-                <CreatorPick key={c.id} c={c} selected={selected.includes(c.id)} onToggle={toggle} />
+                <CreatorPick key={c.id} c={c} badge={groupOf(c)} selected={selected.includes(c.id)} onToggle={toggle} />
               ))}
             </div>
+          )}
+          {mismatched.length > 0 && (
+            <p className="mt-3 text-[12px] font-semibold" style={{ color: '#fbbf24' }}>
+              ⚠ Batch group is {category}, but selected:{' '}
+              {mismatched.map((c) => `@${c.username} (${groupOf(c)})`).join(', ')} — videos will still post as {category}.
+            </p>
           )}
         </section>
 
