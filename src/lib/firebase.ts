@@ -1,4 +1,4 @@
-import { initializeApp } from 'firebase/app';
+﻿import { initializeApp } from 'firebase/app';
 import {
   getFirestore,
   collection,
@@ -26,10 +26,9 @@ import {
   AdminAnalyticsDocument,
   DeviceType,
   UserStatus,
-  NotificationDocument,
-  NotificationType,
-  ScheduleType,
-  NotificationStatus,
+  AppType,
+  ReferralGroup,
+  AuthProvider,
   VideoDocument,
   TelemetryEventDocument,
 } from '../types';
@@ -53,7 +52,6 @@ export const USERS_COLLECTION = 'users';
 export const EVENTS_COLLECTION = 'events';
 export const DAILY_ANALYTICS_COLLECTION = 'daily_analytics';
 export const ADMIN_ANALYTICS_COLLECTION = 'admin_analytics';
-export const NOTIFICATIONS_COLLECTION = 'notifications';
 export const VIDEOS_COLLECTION = 'videos';
 export const APP_STATS_DOC = 'app_stats';
 
@@ -120,7 +118,14 @@ export function subscribeToUsers(
           firstSeen: data.firstSeen || new Date(),
           currentPage: data.currentPage || '/',
           notificationsSubscribed: typeof data.notificationsSubscribed === 'boolean' ? data.notificationsSubscribed : true,
-          totalDownloads: typeof data.totalDownloads === 'number' ? data.totalDownloads : Math.floor(Math.random() * 8) + 1,
+          totalDownloads: typeof data.totalDownloads === 'number' ? data.totalDownloads : 0,
+          appType: (data.appType as AppType) || (data.isPWA === true ? 'PWA' : 'Browser'),
+          isPWA: typeof data.isPWA === 'boolean' ? data.isPWA : data.appType === 'PWA',
+          referralGroup: (data.referralGroup as ReferralGroup) || 'Direct',
+          countrySource: data.countrySource || 'manual',
+          videosWatched: typeof data.videosWatched === 'number' ? data.videosWatched : 0,
+          totalSaves: typeof data.totalSaves === 'number' ? data.totalSaves : 0,
+          authProvider: (data.authProvider as AuthProvider) || 'guest',
         };
       });
       onData(users);
@@ -205,114 +210,6 @@ export function subscribeToAllDailyAnalytics(
 }
 
 /**
- * Subscribe in real-time to all notifications in Firestore
- */
-export function subscribeToNotifications(
-  onData: (notifications: NotificationDocument[]) => void,
-  onError?: (err: Error) => void
-) {
-  const notificationsRef = collection(db, NOTIFICATIONS_COLLECTION);
-  return onSnapshot(
-    notificationsRef,
-    (snapshot) => {
-      const items: NotificationDocument[] = snapshot.docs.map((docSnap) => {
-        const data = docSnap.data();
-        return {
-          id: docSnap.id,
-          type: (data.type as NotificationType) || 'instant',
-          template: data.template || '[photo] {name} just posted a video, checkout now',
-          namesList: Array.isArray(data.namesList) ? data.namesList : [],
-          imageUrl: data.imageUrl || '',
-          targetUrl: data.targetUrl || 'index.html',
-          scheduleType: (data.scheduleType as ScheduleType) || 'fixed',
-          intervalHours: typeof data.intervalHours === 'number' ? data.intervalHours : 2,
-          status: (data.status as NotificationStatus) || 'active',
-          createdAt: data.createdAt || new Date(),
-        };
-      });
-      onData(items);
-    },
-    (err) => {
-      handleFirestoreError(err, OperationType.LIST, NOTIFICATIONS_COLLECTION);
-      if (onError) onError(err);
-    }
-  );
-}
-
-/**
- * Save or update a notification document in Firestore
- */
-export async function saveNotificationDoc(notificationData: Omit<NotificationDocument, 'id'> & { id?: string }): Promise<string> {
-  try {
-    const isUpdate = !!notificationData.id;
-    const docRef = isUpdate
-      ? doc(db, NOTIFICATIONS_COLLECTION, notificationData.id!)
-      : doc(collection(db, NOTIFICATIONS_COLLECTION));
-
-    const payload: Record<string, any> = {
-      type: notificationData.type || 'instant',
-      template: notificationData.template || '[photo] {name} just posted a video, checkout now',
-      namesList: Array.isArray(notificationData.namesList) ? notificationData.namesList : [],
-      imageUrl: notificationData.imageUrl || '',
-      targetUrl: notificationData.targetUrl || 'index.html',
-      status: notificationData.status || 'active',
-      createdAt: notificationData.createdAt ? notificationData.createdAt : serverTimestamp(),
-    };
-
-    if (notificationData.type === 'daily') {
-      payload.scheduleType = notificationData.scheduleType || 'fixed';
-      payload.intervalHours = notificationData.intervalHours || 2;
-    }
-
-    await setDoc(docRef, payload, { merge: true });
-    return docRef.id;
-  } catch (err) {
-    handleFirestoreError(err, OperationType.WRITE, NOTIFICATIONS_COLLECTION);
-    throw err;
-  }
-}
-
-/**
- * Delete a notification from Firestore
- */
-export async function deleteNotificationDoc(id: string): Promise<void> {
-  try {
-    const docRef = doc(db, NOTIFICATIONS_COLLECTION, id);
-    await deleteDoc(docRef);
-  } catch (err) {
-    handleFirestoreError(err, OperationType.DELETE, `${NOTIFICATIONS_COLLECTION}/${id}`);
-    throw err;
-  }
-}
-
-/**
- * Toggle notification status between 'active' and 'paused'
- */
-export async function toggleNotificationStatus(id: string, currentStatus: NotificationStatus): Promise<void> {
-  try {
-    const docRef = doc(db, NOTIFICATIONS_COLLECTION, id);
-    const newStatus: NotificationStatus = currentStatus === 'active' ? 'paused' : 'active';
-    await updateDoc(docRef, { status: newStatus });
-  } catch (err) {
-    handleFirestoreError(err, OperationType.UPDATE, `${NOTIFICATIONS_COLLECTION}/${id}`);
-    throw err;
-  }
-}
-
-/**
- * Toggle user notification subscription status
- */
-export async function toggleUserNotificationSubscribed(userId: string, currentSubscribed: boolean): Promise<void> {
-  try {
-    const docRef = doc(db, USERS_COLLECTION, userId);
-    await updateDoc(docRef, { notificationsSubscribed: !currentSubscribed });
-  } catch (err) {
-    handleFirestoreError(err, OperationType.UPDATE, `${USERS_COLLECTION}/${userId}`);
-    throw err;
-  }
-}
-
-/**
  * Subscribe in real-time to all videos in Firestore
  */
 export function subscribeToVideos(
@@ -379,10 +276,10 @@ export async function saveVideoDoc(videoData: Omit<VideoDocument, 'id'> & { id?:
       created_at: videoData.created_at ? videoData.created_at : serverTimestamp(),
     };
 
-    // Beta ownership/grouping — only written when provided, never wiped.
+    // Beta ownership/grouping â€” only written when provided, never wiped.
     if (videoData.creatorId) payload.creatorId = videoData.creatorId;
     if (videoData.category) payload.category = videoData.category;
-    // Beta SEO — caption string + hashtags array, merge-safe.
+    // Beta SEO â€” caption string + hashtags array, merge-safe.
     if (typeof videoData.caption === 'string' && videoData.caption) payload.caption = videoData.caption;
     if (Array.isArray(videoData.hashtags) && videoData.hashtags.length > 0) payload.hashtags = videoData.hashtags;
 
@@ -728,7 +625,45 @@ export function subscribeToEvents(
 }
 
 /**
- * Log a telemetry event coming from client scripts (tracking.js, script.js, notification.js)
+ * Subscribe to the N most recent telemetry events (capped query — avoids
+ * reading the full events collection for live feeds).
+ */
+export function subscribeToRecentEvents(
+  count: number,
+  onData: (events: TelemetryEventDocument[]) => void,
+  onError?: (err: Error) => void
+) {
+  const eventsRef = collection(db, EVENTS_COLLECTION);
+  const q = query(eventsRef, orderBy('timestamp', 'desc'), limit(Math.max(1, Math.min(count, 100))));
+  return onSnapshot(
+    q,
+    (snapshot) => {
+      const items: TelemetryEventDocument[] = snapshot.docs.map((docSnap) => {
+        const data = docSnap.data();
+        return {
+          id: docSnap.id,
+          event_type: data.event_type || 'page_view',
+          userId: data.userId || 'ANONYMOUS',
+          timestamp: data.timestamp || new Date(),
+          user_agent: data.user_agent || '',
+          device_type: (data.device_type as DeviceType) || 'Mobile',
+          video_id: data.video_id || '',
+          referrer: data.referrer || 'Direct',
+          country: data.country || 'GH',
+          details: data.details || '',
+        };
+      });
+      onData(items);
+    },
+    (err) => {
+      handleFirestoreError(err, OperationType.LIST, EVENTS_COLLECTION);
+      if (onError) onError(err);
+    }
+  );
+}
+
+/**
+ * Log a telemetry event coming from client scripts (tracking.js, script.js)
  */
 export async function logTelemetryEvent(
   eventData: Omit<TelemetryEventDocument, 'id'>
@@ -837,6 +772,16 @@ export async function saveUserDoc(user: Partial<UserDocument> & { userId: string
     firstSeen: user.firstSeen ? user.firstSeen : serverTimestamp(),
     currentPage: user.currentPage || '/s/link-1',
   };
+  // Merge-safe taxonomy fields — only written when explicitly provided so the
+  // public-site tracker remains the source of truth for auto-detected values.
+  if (user.appType) userDoc.appType = user.appType;
+  if (typeof user.isPWA === 'boolean') userDoc.isPWA = user.isPWA;
+  if (user.referralGroup) userDoc.referralGroup = user.referralGroup;
+  if (user.countrySource) userDoc.countrySource = user.countrySource;
+  if (typeof user.videosWatched === 'number') userDoc.videosWatched = user.videosWatched;
+  if (typeof user.totalSaves === 'number') userDoc.totalSaves = user.totalSaves;
+  if (typeof user.totalDownloads === 'number') userDoc.totalDownloads = user.totalDownloads;
+  if (user.authProvider) userDoc.authProvider = user.authProvider;
 
   await setDoc(docRef, userDoc, { merge: true });
 }
@@ -918,10 +863,10 @@ export async function logPageViewEvent(
 /**
  * Seed initial realistic demo data if collection is empty
  * DISABLED (Admin rebuild 2026-09-25): never auto-run in prod.
- * Kept as a manual dev-only helper — call explicitly if you need fixtures.
+ * Kept as a manual dev-only helper â€” call explicitly if you need fixtures.
  */
 export async function seedDemoData(): Promise<{ userCount: number }> {
-  console.warn('[seedDemoData] disabled in prod — no demo users/analytics will be written.');
+  console.warn('[seedDemoData] disabled in prod â€” no demo users/analytics will be written.');
   return { userCount: 0 };
   /* MANUAL-ONLY legacy body preserved below for local dev use:
   const sampleUsers: Array<Omit<UserDocument, 'id'>> = [

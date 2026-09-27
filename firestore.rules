@@ -67,9 +67,5 @@ service cloud.firestore {
     match /admin_analytics/{docId} {
       allow read, write: if true;
     }
-
-    match /notifications/{notificationId} {
-      allow read, write: if true;
-    }
   }
 }

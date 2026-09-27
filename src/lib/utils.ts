@@ -239,3 +239,18 @@ export function getPresetDates(preset: string): { startDate: string; endDate: st
       return { startDate: '', endDate: '' };
   }
 }
+
+/**
+ * Normalize a custom from/to pair ("YYYY-MM-DD").
+ * - Empty side = unbounded on that side.
+ * - If both set and start > end, auto-swap so start <= end.
+ */
+export function normalizeDateRange(
+  start: string,
+  end: string
+): { startDate: string; endDate: string } {
+  const s = (start || '').trim();
+  const e = (end || '').trim();
+  if (s && e && s > e) return { startDate: e, endDate: s };
+  return { startDate: s, endDate: e };
+}

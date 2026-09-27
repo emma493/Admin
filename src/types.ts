@@ -4,6 +4,11 @@ export type DeviceType = 'Mobile' | 'Desktop' | 'Tablet';
 export type UserStatus = 'Online' | 'Offline';
 export type ThemeMode = 'dark' | 'light';
 
+// User tab taxonomy (spec §1–§3). All new fields optional so legacy docs keep working.
+export type AppType = 'PWA' | 'Browser';
+export type ReferralGroup = 'Direct' | 'Google' | 'Organic' | 'Social';
+export type AuthProvider = 'google' | 'email' | 'guest';
+
 export interface UserDocument {
   id: string; // Firestore doc ID (usually matches userId)
   userId: string; // e.g. "GH2156790"
@@ -17,11 +22,17 @@ export interface UserDocument {
   currentPage: string;
   notificationsSubscribed?: boolean; // true = Subscribed, false = Not Subscribed
   totalDownloads?: number; // counter of downloads completed
+  // §1 Device & Platform Insights
+  appType?: AppType; // PWA Installed vs Web Browser
+  isPWA?: boolean; // true when launched in standalone display mode
+  referralGroup?: ReferralGroup; // normalized Direct/Google/Organic/Social
+  countrySource?: 'client-locale' | 'ip-api' | 'manual'; // how country was resolved (no raw IP stored)
+  // §2 Engagement & Consumption
+  videosWatched?: number; // clips watched past 80% completion
+  totalSaves?: number; // bookmark/save button taps
+  // §3 Auth & Session Intelligence
+  authProvider?: AuthProvider; // google | email | guest
 }
-
-export type NotificationType = 'instant' | 'daily';
-export type ScheduleType = 'fixed' | 'random';
-export type NotificationStatus = 'active' | 'paused';
 
 export type VideoTranscodeStatus = 'processing' | 'ready' | 'failed';
 
@@ -63,19 +74,6 @@ export interface VideoDocument {
   status_error?: string;
   hls_url?: string;
   poster_url?: string;
-}
-
-export interface NotificationDocument {
-  id: string; // Auto-generated string
-  type: NotificationType; // "instant" | "daily"
-  template: string; // e.g., "[photo] {name} just posted a video, checkout now"
-  namesList: string[]; // e.g., ["Sarah", "Jessica", "Amanda"]
-  imageUrl?: string; // base64 string or CDN URL
-  targetUrl: string; // default "index.html"
-  scheduleType?: ScheduleType; // "fixed" | "random" [Only for "daily"]
-  intervalHours?: number; // [Only for "daily"]
-  status: NotificationStatus; // "active" | "paused"
-  createdAt: Timestamp | Date | number | any;
 }
 
 export interface DailyAnalyticsDocument {
@@ -133,6 +131,9 @@ export interface UserFilterState {
   deviceType: 'All' | 'Mobile' | 'Desktop' | 'Tablet';
   country: string;
   sortBy: 'durationDesc' | 'durationAsc' | 'recentActive' | 'userId';
+  authProvider: 'All' | AuthProvider;
+  appType: 'All' | AppType;
+  referralGroup: 'All' | ReferralGroup;
 }
 
 export interface LiveActivityEvent {

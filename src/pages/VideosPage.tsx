@@ -7,6 +7,7 @@ import {
 } from '../lib/firebase';
 import { subscribeToCreators } from '../lib/creators';
 import type { CreatorDocument, VideoCategory, VideoDocument } from '../types';
+import Dropdown from '../components/Dropdown';
 
 const surface = { background: '#1E1F27', border: '1px solid rgba(255,255,255,0.08)' };
 
@@ -190,37 +191,37 @@ export default function VideosPage() {
         </div>
       </div>
 
-      <div className="mt-5 grid gap-3 lg:grid-cols-[220px_1fr]">
+      <div className="mt-5 grid gap-3 lg:grid-cols-[240px_minmax(0,1fr)] items-start">
         {/* Filters */}
-        <div className="rounded-[14px] p-4 grid gap-3 content-start" style={surface}>
-          <label className="grid gap-1.5">
+        <div className="rounded-[14px] p-4 grid gap-3 content-start min-w-0 w-full max-w-full" style={surface}>
+          <div className="grid gap-1.5 min-w-0 max-w-full">
             <span className="text-[#E1E2E6] text-[12px] font-bold uppercase tracking-[0.1em]">Creator</span>
-            <select
+            <Dropdown
+              ariaLabel="Filter by creator"
               value={creatorFilter}
-              onChange={(e) => setCreatorFilter(e.target.value)}
-              className="px-3 py-2.5 rounded-[10px] text-white text-[13px] font-semibold outline-none"
-              style={{ background: '#16171D', border: '1px solid rgba(255,255,255,0.1)' }}
-            >
-              <option value="all">All creators ({videos.length})</option>
-              {creators.map((c) => (
-                <option key={c.id} value={c.id}>
-                  @{c.username} ({counts.get(c.id) ?? 0})
-                </option>
-              ))}
-              <option value="unlinked">Unlinked ({counts.get('unlinked') ?? 0})</option>
-            </select>
-          </label>
+              onChange={setCreatorFilter}
+              options={[
+                { value: 'all', label: 'All creators', count: videos.length },
+                ...creators.map((c) => ({
+                  value: c.id,
+                  label: `@${c.username}`,
+                  count: counts.get(c.id) ?? 0,
+                })),
+                { value: 'unlinked', label: 'Unlinked', count: counts.get('unlinked') ?? 0 },
+              ]}
+            />
+          </div>
 
-          <div className="grid gap-1.5">
+          <div className="grid gap-1.5 min-w-0 max-w-full">
             <span className="text-[#E1E2E6] text-[12px] font-bold uppercase tracking-[0.1em]">Group</span>
-            <div className="flex gap-2">
+            <div className="flex gap-2 flex-wrap min-w-0">
               {(['all', 'girls', 'couples'] as CategoryFilter[]).map((g) => (
                 <button
                   key={g}
                   type="button"
                   onClick={() => setCategoryFilter(g)}
                   aria-pressed={categoryFilter === g}
-                  className="px-4 py-2 rounded-[10px] text-[13px] font-bold capitalize"
+                  className="flex-1 min-w-0 px-3 py-2 rounded-[10px] text-[13px] font-bold capitalize truncate"
                   style={
                     categoryFilter === g
                       ? { background: '#FF2B55', color: '#fff' }
@@ -233,15 +234,15 @@ export default function VideosPage() {
             </div>
           </div>
 
-          <label className="grid gap-1.5">
+          <label className="grid gap-1.5 min-w-0 max-w-full">
             <span className="text-[#E1E2E6] text-[12px] font-bold uppercase tracking-[0.1em]">Search</span>
-            <div className="relative">
+            <div className="relative min-w-0 max-w-full">
               <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#8A8B91]" />
               <input
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="Caption, #tag, url…"
-                className="w-full pl-9 pr-3 py-2.5 rounded-[10px] text-white text-[13px] outline-none placeholder:text-[#8A8B91]"
+                className="w-full max-w-full min-w-0 pl-9 pr-3 py-2.5 rounded-[10px] text-white text-[13px] outline-none placeholder:text-[#8A8B91]"
                 style={{ background: '#16171D', border: '1px solid rgba(255,255,255,0.1)' }}
               />
             </div>
@@ -249,7 +250,7 @@ export default function VideosPage() {
         </div>
 
         {/* List */}
-        <div className="grid gap-3 content-start">
+        <div className="grid gap-3 content-start min-w-0 max-w-full">
           {filtered.length === 0 && connected ? (
             <div
               className="rounded-[14px] p-10 text-center text-[#8A8B91] text-[14px] flex flex-col items-center gap-2"

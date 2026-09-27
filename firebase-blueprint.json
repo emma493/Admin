@@ -56,6 +56,38 @@
       },
       "required": ["type", "template", "namesList", "status"]
     },
+    "push_tokens": {
+      "title": "Push Token",
+      "description": "Web Push subscriptions banked by shortxx.live (FCM tokens + local fallback)",
+      "type": "object",
+      "properties": {
+        "token": { "type": "string" },
+        "uid": { "type": "string" },
+        "deviceType": { "type": "string" },
+        "notificationsSubscribed": { "type": "boolean" },
+        "source": { "type": "string", "enum": ["fcm", "local"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "updatedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["token", "source"]
+    },
+    "push_logs": {
+      "title": "Push Log",
+      "description": "Fan-out receipts written by the sendNotificationFanout Cloud Function",
+      "type": "object",
+      "properties": {
+        "notificationId": { "type": "string" },
+        "title": { "type": "string" },
+        "body": { "type": "string" },
+        "targetUrl": { "type": "string" },
+        "sentCount": { "type": "number" },
+        "failCount": { "type": "number" },
+        "totalTokens": { "type": "number" },
+        "trigger": { "type": "string", "enum": ["manual", "daily", "auto"] },
+        "createdAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["notificationId", "body", "sentCount"]
+    },
     "videos": {
       "title": "Video",
       "description": "Video stream links and analytics",

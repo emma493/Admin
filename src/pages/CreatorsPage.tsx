@@ -2,7 +2,7 @@ import { memo, useEffect, useRef, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { ImagePlus, Loader2, Plus, Trash2, X } from 'lucide-react';
+import { ImagePlus, Loader2, Pencil, Plus, Trash2, X } from 'lucide-react';
 import {
   subscribeToCreators,
   saveCreatorDoc,
@@ -10,6 +10,7 @@ import {
   uploadCreatorAvatar,
 } from '../lib/creators';
 import type { CreatorDocument } from '../types';
+import SUGGESTED_USERNAMES from '../lib/suggested-usernames.json';
 
 const schema = z.object({
   username: z.string().trim().min(2, 'Min 2 characters').max(30, 'Max 30 characters'),
@@ -52,7 +53,13 @@ function friendlySaveError(e: unknown): string {
 }
 
 // Memoized card — adding/deleting one creator no longer re-renders every card.
-const CreatorCard = memo(function CreatorCard({ c }: { c: CreatorDocument }) {
+const CreatorCard = memo(function CreatorCard({
+  c,
+  onEdit,
+}: {
+  c: CreatorDocument;
+  onEdit: (c: CreatorDocument) => void;
+}) {
   return (
     <div
       className="rounded-[14px] p-4 flex items-center gap-3.5"
@@ -78,6 +85,13 @@ const CreatorCard = memo(function CreatorCard({ c }: { c: CreatorDocument }) {
         <div className="text-[#8A8B91] text-[12px]">Joined {formatDate(c.created_at)}</div>
       </div>
       <button
+        onClick={() => onEdit(c)}
+        aria-label={`Edit ${c.username}`}
+        className="p-2 rounded-[8px] text-[#8A8B91] hover:text-white hover:bg-white/[0.08] transition-colors"
+      >
+        <Pencil size={16} />
+      </button>
+      <button
         onClick={() => deleteCreatorDoc(c.id)}
         aria-label={`Delete ${c.username}`}
         className="p-2 rounded-[8px] text-[#8A8B91] hover:text-white hover:bg-white/[0.08] transition-colors"
@@ -92,6 +106,7 @@ export default function CreatorsPage() {
   const [creators, setCreators] = useState<CreatorDocument[]>([]);
   const [connected, setConnected] = useState(false);
   const [showForm, setShowForm] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState('');
@@ -103,9 +118,25 @@ export default function CreatorsPage() {
     handleSubmit,
     reset,
     watch,
+    setValue,
     formState: { errors },
   } = useForm<FormValues>({ resolver: zodResolver(schema) });
   const urlValue = watch('avatarUrl') || '';
+  const [suggSeed, setSuggSeed] = useState(0);
+
+  // Scraped handle ideas: short + not already in Firestore (unique).
+  // UNVERIFIED — owner must confirm each is an adult woman before creating.
+  const takenNames = new Set(creators.map((c) => c.username.toLowerCase()));
+  const suggPool = (SUGGESTED_USERNAMES as string[]).filter(
+    (n) => !takenNames.has(n.toLowerCase())
+  );
+  const suggStart = suggPool.length ? (suggSeed * 6) % suggPool.length : 0;
+  const suggestions = suggPool.length
+    ? Array.from(
+        { length: Math.min(6, suggPool.length) },
+        (_, i) => suggPool[(suggStart + i) % suggPool.length]
+      )
+    : [];
 
   useEffect(() => {
     const unsub = subscribeToCreators(
@@ -132,6 +163,7 @@ export default function CreatorsPage() {
     setError('');
     try {
       const id = await saveCreatorDoc({
+        id: editingId ?? undefined,
         username: values.username,
         avatarUrl: values.avatarUrl?.trim() || '',
       });
@@ -142,11 +174,30 @@ export default function CreatorsPage() {
       reset();
       setFile(null);
       setShowForm(false);
+      setEditingId(null);
     } catch (e) {
       setError(friendlySaveError(e));
     } finally {
       setSaving(false);
     }
+  };
+
+  const startEdit = (c: CreatorDocument) => {
+    setEditingId(c.id);
+    setFile(null);
+    setError('');
+    setValue('username', c.username, { shouldValidate: true });
+    setValue('avatarUrl', c.avatarUrl ?? '', { shouldValidate: true });
+    setPreview(c.avatarUrl ?? '');
+    setShowForm(true);
+  };
+
+  const closeForm = () => {
+    setShowForm(false);
+    setEditingId(null);
+    setFile(null);
+    setError('');
+    reset();
   };
 
   return (
@@ -159,7 +210,7 @@ export default function CreatorsPage() {
           </p>
         </div>
         <button
-          onClick={() => setShowForm((v) => !v)}
+          onClick={() => (showForm ? closeForm() : (setEditingId(null), setShowForm(true)))}
           className="flex items-center gap-2 text-white text-[14px] font-bold px-4 py-2.5 rounded-[10px] transition-colors"
           style={{ background: '#FF2B55' }}
         >
@@ -207,6 +258,32 @@ export default function CreatorsPage() {
                 style={{ background: '#16171D', border: '1px solid rgba(255,255,255,0.1)' }}
               />
               {errors.username && <span className="text-[#FF2B55] text-[12px]">{errors.username.message}</span>}
+              {suggestions.length > 0 && (
+                <div className="flex flex-wrap items-center gap-1.5 mt-1">
+                  <span className="text-[#8A8B91] text-[12px] font-semibold">Scraped ideas:</span>
+                  {suggestions.map((n) => (
+                    <button
+                      key={n}
+                      type="button"
+                      onClick={() => setValue('username', n, { shouldValidate: true })}
+                      className="px-2.5 py-1 rounded-full text-[12px] font-bold text-[#E1E2E6] hover:text-white hover:bg-white/[0.08] transition-colors"
+                      style={{ background: '#16171D', border: '1px solid rgba(255,255,255,0.1)' }}
+                    >
+                      @{n}
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => setSuggSeed((s) => s + 1)}
+                    className="px-2.5 py-1 rounded-full text-[12px] font-bold text-[#A1A2A7] hover:text-white"
+                  >
+                    Shuffle
+                  </button>
+                </div>
+              )}
+              <p className="text-[#8A8B91] text-[11px]">
+                Real scraped nuditok handles — open nuditok.com/@name and confirm girl 18+ before creating.
+              </p>
             </label>
             <label className="grid gap-1.5">
               <span className="text-[#E1E2E6] text-[13px] font-bold">Image URL <span className="text-[#8A8B91] font-semibold">(or upload a picture)</span></span>
@@ -227,7 +304,7 @@ export default function CreatorsPage() {
                 style={{ background: '#FF2B55' }}
               >
                 {saving && <Loader2 size={15} className="animate-spin" />}
-                {saving ? 'Saving…' : 'Create creator'}
+                {saving ? 'Saving…' : editingId ? 'Save changes' : 'Create creator'}
               </button>
             </div>
           </div>
@@ -236,7 +313,7 @@ export default function CreatorsPage() {
 
       <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
         {creators.map((c) => (
-          <CreatorCard key={c.id} c={c} />
+          <CreatorCard key={c.id} c={c} onEdit={startEdit} />
         ))}
       </div>
 

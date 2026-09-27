@@ -61,16 +61,16 @@ export async function saveCreatorDoc(data: {
   const docRef = data.id
     ? doc(db, CREATORS_COLLECTION, data.id)
     : doc(collection(db, CREATORS_COLLECTION));
-  await setDoc(
-    docRef,
-    {
-      username,
-      avatarUrl: data.avatarUrl || '',
-      is_active: true,
-      created_at: serverTimestamp(),
-    },
-    { merge: true }
-  );
+  const payload: Record<string, unknown> = {
+    username,
+    avatarUrl: data.avatarUrl || '',
+    is_active: true,
+  };
+  // Only stamp created_at on create — edits must not reset the join date.
+  if (!data.id) {
+    payload.created_at = serverTimestamp();
+  }
+  await setDoc(docRef, payload, { merge: true });
   return docRef.id;
 }
 

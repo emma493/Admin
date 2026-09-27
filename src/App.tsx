@@ -16,7 +16,7 @@
 
 import { Suspense, lazy, useState } from 'react';
 import { BrowserRouter, NavLink, Route, Routes } from 'react-router-dom';
-import { LayoutDashboard, LogOut, UploadCloud, Users, Clapperboard } from 'lucide-react';
+import { LayoutDashboard, LogOut, UploadCloud, Users, Clapperboard, UserRound, ChartNoAxesColumn } from 'lucide-react';
 import { db } from './lib/firebase';
 import { isAuthed, logout } from './lib/auth';
 import Sidebar from './components/Sidebar';
@@ -26,6 +26,8 @@ const DashboardPage = lazy(() => import('./pages/DashboardPage'));
 const CreatorsPage = lazy(() => import('./pages/CreatorsPage'));
 const VideosPage = lazy(() => import('./pages/VideosPage'));
 const UploadPage = lazy(() => import('./pages/UploadPage'));
+const UsersPage = lazy(() => import('./pages/UsersPage'));
+const AnalyticsPage = lazy(() => import('./pages/AnalyticsPage'));
 const LoginPage = lazy(() => import('./pages/LoginPage'));
 
 function PageFallback() {
@@ -58,8 +60,8 @@ export default function App() {
           }}
         />
         <div className="flex-1 min-w-0">
-          <div className="lg:hidden flex items-center gap-2 px-4 py-3" style={{ background: '#16171D', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
-            <span className="text-white font-black mr-2">Shortxx</span>
+          <div className="lg:hidden flex items-center gap-2 px-4 py-3 overflow-x-auto" style={{ background: '#16171D', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+            <span className="text-white font-black mr-2 shrink-0">Shortxx</span>
             <NavLink
               to="/"
               end
@@ -93,6 +95,22 @@ export default function App() {
             >
               <UploadCloud size={15} /> Upload
             </NavLink>
+            <NavLink
+              to="/users"
+              className={({ isActive }) =>
+                `flex items-center gap-1.5 px-3 py-2 rounded-[8px] text-[13px] font-bold no-underline ${isActive ? 'text-white bg-[#FF2B55]/[0.14]' : 'text-[#A1A2A7]'}`
+              }
+            >
+              <UserRound size={15} /> Users
+            </NavLink>
+            <NavLink
+              to="/analytics"
+              className={({ isActive }) =>
+                `flex items-center gap-1.5 px-3 py-2 rounded-[8px] text-[13px] font-bold no-underline ${isActive ? 'text-white bg-[#FF2B55]/[0.14]' : 'text-[#A1A2A7]'}`
+              }
+            >
+              <ChartNoAxesColumn size={15} /> Analytics
+            </NavLink>
             <button
               onClick={() => {
                 logout();
@@ -111,6 +129,8 @@ export default function App() {
                 <Route path="/creators" element={<CreatorsPage />} />
                 <Route path="/videos" element={<VideosPage />} />
                 <Route path="/upload" element={<UploadPage />} />
+                <Route path="/users" element={<UsersPage />} />
+                <Route path="/analytics" element={<AnalyticsPage />} />
               </Routes>
             </Suspense>
           </main>
