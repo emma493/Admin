@@ -6,3 +6,9 @@ coverage/
 *.log
 .env*
 !.env.example
+__pycache__/
+*.pyc
+tools/*.crawled.json
+tools/*.prev.json
+tools/*.stats.json
+tools/.creator_watch.state.json
