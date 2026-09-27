@@ -12,6 +12,22 @@ import type { CreatorDocument } from '../types';
 
 const storage = getStorage(app);
 
+/** Creator group badge shared by the Creators + Upload pages.
+ * Explicit owner choice always wins; otherwise video-majority decides
+ * (exact ties read as Girls); no data means no badge. */
+export type CreatorBadge = 'Girls' | 'Couples' | null;
+
+export function resolveCreatorBadge(
+  explicit: 'girls' | 'couples' | undefined,
+  girls: number,
+  couples: number
+): CreatorBadge {
+  if (explicit === 'girls') return 'Girls';
+  if (explicit === 'couples') return 'Couples';
+  if (girls === 0 && couples === 0) return null;
+  return girls >= couples ? 'Girls' : 'Couples';
+}
+
 export function subscribeToCreators(
   onData: (creators: CreatorDocument[]) => void,
   onError?: (err: Error) => void

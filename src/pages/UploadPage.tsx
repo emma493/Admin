@@ -1,7 +1,8 @@
 import { memo, useEffect, useMemo, useState } from 'react';
 import { Link2, Loader2, UploadCloud } from 'lucide-react';
 import { saveVideoDoc } from '../lib/firebase';
-import { subscribeToCreators } from '../lib/creators';
+import { subscribeToCreators, resolveCreatorBadge } from '../lib/creators';
+import type { CreatorBadge } from '../lib/creators';
 import { extractLinksFromString } from '../lib/videoUtils';
 import { suggestFor } from '../lib/captionAI';
 import type { CreatorDocument, VideoCategory } from '../types';
@@ -15,7 +16,7 @@ const CreatorPick = memo(function CreatorPick({
   onToggle,
 }: {
   c: CreatorDocument;
-  badge: 'Girls' | 'Couples' | null;
+  badge: CreatorBadge;
   selected: boolean;
   onToggle: (id: string) => void;
 }) {
@@ -88,8 +89,8 @@ export default function UploadPage() {
   const perCreator = selected.length > 0 ? Math.ceil(links.length / selected.length) : 0;
   const canSubmit = !busy && selected.length > 0 && links.length > 0;
 
-  const groupOf = (c: CreatorDocument): 'Girls' | 'Couples' | null =>
-    c.category === 'girls' ? 'Girls' : c.category === 'couples' ? 'Couples' : null;
+  const groupOf = (c: CreatorDocument): CreatorBadge =>
+    resolveCreatorBadge(c.category, 0, 0);
 
   // Warn-only mismatch guard: batch group vs each selected creator's group.
   const mismatched = selected

@@ -178,9 +178,9 @@ const DEFAULTS: FormValues = {
   userId: '',
   country: 'GH',
   deviceType: 'Mobile',
-  trafficSource: 'google.com',
+  trafficSource: 'Direct',
   status: 'Online',
-  currentPage: '/s/link-1',
+  currentPage: '/',
 };
 
 export default function UsersPage() {

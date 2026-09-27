@@ -8,8 +8,10 @@ import {
   saveCreatorDoc,
   deleteCreatorDoc,
   uploadCreatorAvatar,
+  resolveCreatorBadge,
 } from '../lib/creators';
-import { subscribeToVideos } from '../lib/firebase';
+import type { CreatorBadge } from '../lib/creators';
+import { subscribeToVideos, updateVideoCreator } from '../lib/firebase';
 import type { CreatorDocument, VideoCategory, VideoDocument } from '../types';
 import SUGGESTED_USERNAMES from '../lib/suggested-usernames.json';
 
@@ -53,17 +55,8 @@ function friendlySaveError(e: unknown): string {
   return msg;
 }
 
-// Category badge derived from the creator's videos (category lives on video
-// docs, not creator docs). Only Girls and Couples creators exist, so the
-// badge is binary: majority wins, exact ties read as Girls. Creators with no
-// categorized videos yet get no badge.
-type CreatorBadge = 'Girls' | 'Couples' | null;
-
-function badgeFor(girls: number, couples: number): CreatorBadge {
-  if (girls === 0 && couples === 0) return null;
-  return girls >= couples ? 'Girls' : 'Couples';
-}
-
+// Category badge: explicit owner choice wins, else video majority (shared
+// resolver with the Upload page). Creators with no data get no badge.
 const BADGE_STYLE: Record<Exclude<CreatorBadge, null>, { background: string; color: string }> = {
   Girls: { background: 'rgba(255,43,85,0.12)', color: '#ff8fa3' },
   Couples: { background: 'rgba(168,85,247,0.15)', color: '#c4b5fd' },
@@ -74,10 +67,12 @@ const CreatorCard = memo(function CreatorCard({
   c,
   badge,
   onEdit,
+  onDelete,
 }: {
   c: CreatorDocument;
   badge: CreatorBadge;
   onEdit: (c: CreatorDocument) => void;
+  onDelete: (c: CreatorDocument) => void;
 }) {
   return (
     <div
@@ -122,7 +117,7 @@ const CreatorCard = memo(function CreatorCard({
         <Pencil size={16} />
       </button>
       <button
-        onClick={() => deleteCreatorDoc(c.id)}
+        onClick={() => onDelete(c)}
         aria-label={`Delete ${c.username}`}
         className="p-2 rounded-[8px] text-[#8A8B91] hover:text-white hover:bg-white/[0.08] transition-colors"
       >
@@ -141,7 +136,9 @@ export default function CreatorsPage() {
   const [saving, setSaving] = useState(false);
   const [file, setFile] = useState<File | null>(null);
   const [preview, setPreview] = useState('');
-  const [category, setCategory] = useState<VideoCategory>('girls');
+  // Tri-state: '' means "not set" (legacy docs). New creators default to girls;
+  // editing a legacy creator preserves unset instead of silently stamping girls.
+  const [category, setCategory] = useState<VideoCategory | ''>('girls');
   const [error, setError] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
 
@@ -185,7 +182,8 @@ export default function CreatorsPage() {
   }, []);
 
   // Per-creator category counts from linked videos (videos carry creatorId).
-  const badgeByCreator = useMemo(() => {
+  // Resolution (explicit > majority) happens at render via resolveCreatorBadge.
+  const countsByCreator = useMemo(() => {
     const counts = new Map<string, { girls: number; couples: number }>();
     for (const v of videos) {
       if (!v.creatorId) continue;
@@ -195,9 +193,7 @@ export default function CreatorsPage() {
       else cur.couples += 1;
       counts.set(v.creatorId, cur);
     }
-    const out = new Map<string, CreatorBadge>();
-    counts.forEach((c, id) => out.set(id, badgeFor(c.girls, c.couples)));
-    return out;
+    return counts;
   }, [videos]);
 
   useEffect(() => {
@@ -217,11 +213,11 @@ export default function CreatorsPage() {
         id: editingId ?? undefined,
         username: values.username,
         avatarUrl: values.avatarUrl?.trim() || '',
-        category,
+        category: category || undefined,
       });
       if (file) {
         const downloadUrl = await uploadCreatorAvatar(file, id);
-        await saveCreatorDoc({ id, username: values.username, avatarUrl: downloadUrl, category });
+        await saveCreatorDoc({ id, username: values.username, avatarUrl: downloadUrl, category: category || undefined });
       }
       reset();
       setFile(null);
@@ -239,7 +235,7 @@ export default function CreatorsPage() {
     setEditingId(c.id);
     setFile(null);
     setError('');
-    setCategory(c.category === 'couples' ? 'couples' : 'girls');
+    setCategory(c.category === 'couples' ? 'couples' : c.category === 'girls' ? 'girls' : '');
     setValue('username', c.username, { shouldValidate: true });
     setValue('avatarUrl', c.avatarUrl ?? '', { shouldValidate: true });
     setPreview(c.avatarUrl ?? '');
@@ -253,6 +249,25 @@ export default function CreatorsPage() {
     setCategory('girls');
     setError('');
     reset();
+  };
+
+  // Delete with confirm + cascade: linked videos are unlinked (kept playable)
+  // so no video ever dangles on a missing creator doc.
+  const onDelete = async (c: CreatorDocument) => {
+    const linked = videos.filter((v) => v.creatorId === c.id);
+    const msg =
+      linked.length > 0
+        ? `Delete @${c.username}? Their ${linked.length} video${linked.length === 1 ? '' : 's'} will become Unlinked (kept, still playable).`
+        : `Delete @${c.username}?`;
+    if (!window.confirm(msg)) return;
+    try {
+      for (const v of linked) {
+        await updateVideoCreator(v.id, null);
+      }
+      await deleteCreatorDoc(c.id);
+    } catch (e) {
+      setError(friendlySaveError(e));
+    }
   };
 
   return (
@@ -362,6 +377,21 @@ export default function CreatorsPage() {
                     {g}
                   </button>
                 ))}
+                <button
+                  type="button"
+                  role="radio"
+                  aria-checked={category === ''}
+                  onClick={() => setCategory('')}
+                  title="Leave group unset — badge falls back to video majority"
+                  className="px-4 py-2 rounded-[10px] text-[13px] font-bold transition-colors"
+                  style={
+                    category === ''
+                      ? { background: 'rgba(255,255,255,0.1)', color: '#fff', border: '1px solid rgba(255,255,255,0.3)' }
+                      : { background: '#16171D', color: '#8A8B91', border: '1px solid rgba(255,255,255,0.1)' }
+                  }
+                >
+                  Not set
+                </button>
               </div>
             </div>
             <label className="grid gap-1.5">
@@ -390,21 +420,23 @@ export default function CreatorsPage() {
         </form>
       )}
 
+      {error && !showForm && (
+        <p className="mt-4 text-[#FF2B55] text-[13px]">{error}</p>
+      )}
+
       <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-        {creators.map((c) => (
-          <CreatorCard
-            key={c.id}
-            c={c}
-            badge={
-              c.category === 'girls'
-                ? 'Girls'
-                : c.category === 'couples'
-                  ? 'Couples'
-                  : (badgeByCreator.get(c.id) ?? null)
-            }
-            onEdit={startEdit}
-          />
-        ))}
+        {creators.map((c) => {
+          const counts = countsByCreator.get(c.id) ?? { girls: 0, couples: 0 };
+          return (
+            <CreatorCard
+              key={c.id}
+              c={c}
+              badge={resolveCreatorBadge(c.category, counts.girls, counts.couples)}
+              onEdit={startEdit}
+              onDelete={onDelete}
+            />
+          );
+        })}
       </div>
 
       {connected && creators.length === 0 && !showForm && (

@@ -272,9 +272,14 @@ export async function saveVideoDoc(videoData: Omit<VideoDocument, 'id'> & { id?:
       source_webpage: sourceWebpage,
       page_url: sourceWebpage,
       is_active: typeof videoData.is_active === 'boolean' ? videoData.is_active : true,
-      views: typeof videoData.views === 'number' ? videoData.views : 0,
-      created_at: videoData.created_at ? videoData.created_at : serverTimestamp(),
     };
+
+    // views/created_at are lifetime counters owned by the public site — only
+    // written when explicitly provided (create path), never defaulted, so an
+    // Admin edit can never reset views to 0 or bump the creation date.
+    if (typeof videoData.views === 'number') payload.views = videoData.views;
+    if (videoData.created_at) payload.created_at = videoData.created_at;
+    else if (!isUpdate) payload.created_at = serverTimestamp();
 
     // Beta ownership/grouping â€” only written when provided, never wiped.
     if (videoData.creatorId) payload.creatorId = videoData.creatorId;
@@ -287,6 +292,21 @@ export async function saveVideoDoc(videoData: Omit<VideoDocument, 'id'> & { id?:
     return docRef.id;
   } catch (err) {
     handleFirestoreError(err, OperationType.WRITE, VIDEOS_COLLECTION);
+    throw err;
+  }
+}
+
+/**
+ * Set (or clear with null) a video's creator linkage. Null keeps the video
+ * playable as Unlinked instead of dangling on a deleted creator.
+ */
+export async function updateVideoCreator(videoId: string, creatorId: string | null): Promise<void> {
+  if (!videoId) return;
+  try {
+    const docRef = doc(db, VIDEOS_COLLECTION, videoId);
+    await updateDoc(docRef, { creatorId });
+  } catch (err) {
+    handleFirestoreError(err, OperationType.UPDATE, `${VIDEOS_COLLECTION}/${videoId}`);
     throw err;
   }
 }
@@ -765,13 +785,15 @@ export async function saveUserDoc(user: Partial<UserDocument> & { userId: string
     userId: user.userId,
     country: user.country || 'GH',
     deviceType: user.deviceType || 'Mobile',
-    trafficSource: user.trafficSource || 'google.com',
+    trafficSource: user.trafficSource || 'Direct',
     status: user.status || 'Online',
-    totalDurationSeconds: user.totalDurationSeconds ?? 120,
     lastActive: user.lastActive ? user.lastActive : serverTimestamp(),
     firstSeen: user.firstSeen ? user.firstSeen : serverTimestamp(),
-    currentPage: user.currentPage || '/s/link-1',
+    currentPage: user.currentPage || '/',
   };
+  // Counters are telemetry-owned: only written when explicitly provided so a
+  // manual Admin save never injects placeholder values into the splits.
+  if (typeof user.totalDurationSeconds === 'number') userDoc.totalDurationSeconds = user.totalDurationSeconds;
   // Merge-safe taxonomy fields — only written when explicitly provided so the
   // public-site tracker remains the source of truth for auto-detected values.
   if (user.appType) userDoc.appType = user.appType;

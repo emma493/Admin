@@ -112,15 +112,16 @@ export default function AnalyticsPage() {
   );
 
   // ---- KPI strip ----
+  // NOTE: daily_analytics docs are never written by public traffic (no public
+  // emitter exists), so these KPIs derive from live collections instead:
+  // video views = lifetime sum of videos.views, visitors = user docs in range.
   const kpis = useMemo(() => {
-    const pageViews = daysInRange.reduce((a, d) => a + (d.pageViews || 0), 0);
-    const visitorIds = new Set<string>();
-    for (const d of daysInRange) for (const id of d.uniqueVisitors || []) visitorIds.add(id);
+    const videoViews = videos.reduce((a, v) => a + (v.views || 0), 0);
     const watchSeconds = usersInRange.reduce((a, u) => a + (u.totalDurationSeconds || 0), 0);
     const online = usersInRange.filter((u) => u.status === 'Online' && isUserActiveWithin(u, 60)).length;
     const pwa = usersInRange.filter((u) => u.appType === 'PWA' || u.isPWA).length;
-    return { pageViews, visitors: visitorIds.size, watchSeconds, online, pwa };
-  }, [daysInRange, usersInRange]);
+    return { videoViews, visitors: usersInRange.length, watchSeconds, online, pwa };
+  }, [videos, usersInRange]);
 
   // ---- Content leaders ----
   const topVideos = useMemo(() => [...videos].sort((a, b) => (b.views || 0) - (a.views || 0)).slice(0, 8), [videos]);
@@ -282,7 +283,7 @@ export default function AnalyticsPage() {
       {/* KPI strip */}
       <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {[
-          { icon: <Eye size={15} />, label: 'Page views', value: kpis.pageViews.toLocaleString(), sub: `${rangeLabel}` },
+          { icon: <Eye size={15} />, label: 'Video views', value: kpis.videoViews.toLocaleString(), sub: `${rangeLabel}` },
           { icon: <Users size={15} />, label: 'Unique visitors', value: kpis.visitors.toLocaleString(), sub: `${usersInRange.length} user docs in range` },
           { icon: <Activity size={15} />, label: 'Watch time', value: formatDuration(kpis.watchSeconds), sub: 'lifetime sums · new tracker field' },
           { icon: <Heart size={15} />, label: 'Likes total', value: totalLikes.toLocaleString(), sub: `${kpis.online} online now · ${kpis.pwa} PWA` },
