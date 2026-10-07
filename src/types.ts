@@ -31,7 +31,7 @@ export interface UserDocument {
   utmMedium?: string;
   utmCampaign?: string;
   landingPage?: string; // first pathname+search seen (merge-safe, set once ideally)
-  countrySource?: 'client-locale' | 'ip-api' | 'manual'; // how country was resolved (no raw IP stored)
+  countrySource?: 'edge' | 'client-locale' | 'ip-api' | 'manual'; // how country was resolved (no raw IP stored)
   // §2 Engagement & Consumption
   videosWatched?: number; // clips watched past 80% completion
   totalSaves?: number; // bookmark/save button taps

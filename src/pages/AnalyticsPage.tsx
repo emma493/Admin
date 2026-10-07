@@ -188,6 +188,33 @@ export default function AnalyticsPage() {
     return counts;
   }, [videos]);
 
+  // Total views gained per group (lifetime sum of videos.views by category).
+  const groupViews = useMemo(() => {
+    const acc = {
+      girls: { views: 0, videos: 0, likes: 0 },
+      couples: { views: 0, videos: 0, likes: 0 },
+      legacy: { views: 0, videos: 0, likes: 0 },
+    };
+    for (const v of videos) {
+      const t = v.category === 'girls' ? acc.girls : v.category === 'couples' ? acc.couples : acc.legacy;
+      t.views += v.views || 0;
+      t.likes += v.likes || 0;
+      t.videos += 1;
+    }
+    const total = acc.girls.views + acc.couples.views + acc.legacy.views || 1;
+    const rows = [
+      { label: 'Girls', color: '#FF2B55', ...acc.girls },
+      { label: 'Couples', color: '#a78bfa', ...acc.couples },
+      { label: 'Legacy (unlabeled)', color: '#8A8B91', ...acc.legacy },
+    ];
+    return rows.map((r) => ({
+      ...r,
+      pct: (r.views / total) * 100,
+      avg: r.videos ? r.views / r.videos : 0,
+    }));
+  }, [videos]);
+  const maxGroupViews = groupViews.reduce((m, r) => Math.max(m, r.views), 1);
+
   // ---- Audience splits ----
   const accessData = useMemo(() => {
     let pwa = 0;
@@ -382,6 +409,9 @@ export default function AnalyticsPage() {
     for (const v of topVideos)
       lines.push([v.id, videoTitle(v), creatorName(v.creatorId, creators), v.category ?? 'legacy', v.views || 0, v.likes || 0].map(esc).join(','));
     lines.push('');
+    lines.push('group,views,videos,likes,sharePct');
+    for (const g of groupViews) lines.push([g.label, g.views, g.videos, g.likes, `${g.pct.toFixed(1)}%`].map(esc).join(','));
+    lines.push('');
     lines.push('country,views,uniques,topReferral,topHost,topUtm,defaultedPct');
     for (const c of countries) lines.push([c.code, c.views, c.uniques, c.topReferral, c.topHost, c.topUtm, `${c.defaultedPct}%`].map(esc).join(','));
     lines.push('');
@@ -502,6 +532,29 @@ export default function AnalyticsPage() {
             ))
           )}
         </div>
+      </div>
+
+      {/* Views by group — lifetime totals per Girls/Couples/Legacy */}
+      <div className="mt-3 rounded-[14px] p-5 grid gap-3 content-start min-w-0" style={surface}>
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <h2 className="text-white text-[15px] font-bold">Views by group</h2>
+          <span className="text-[#8A8B91] text-[12px]">Lifetime video views · label legacy videos on the Videos page to shrink Legacy</span>
+        </div>
+        {groupViews.every((r) => r.videos === 0) ? (
+          <p className="text-[#8A8B91] text-[13px]">No videos yet.</p>
+        ) : (
+          groupViews.map((r) => (
+            <div key={r.label} className="grid gap-1.5 min-w-0">
+              <div className="flex items-center justify-between gap-2 text-[13px] min-w-0">
+                <span className="text-white font-semibold truncate">{r.label}</span>
+                <span className="text-[#8A8B91] tabular-nums shrink-0">
+                  {r.views.toLocaleString()} views · {r.videos} clips · {r.pct.toFixed(0)}% · avg {Math.round(r.avg).toLocaleString()}/clip
+                </span>
+              </div>
+              <Bar pct={(r.views / maxGroupViews) * 100} color={r.color} />
+            </div>
+          ))
+        )}
       </div>
 
       {/* Audience splits */}
@@ -740,7 +793,7 @@ export default function AnalyticsPage() {
                 </span>
                 <span className="text-white font-semibold truncate">{e.userId}</span>
                 <span className="text-[#8A8B91] truncate hidden sm:inline">
-                  {e.video_id ? `▸ ${e.video_id}` : ''} {e.country ? `· ${e.country}` : ''} {e.device_type ? `· ${e.device_type}` : ''}{e.referral_group ? ` · ${e.referral_group}` : ''}{e.referrer_host && e.referrer_host !== 'Direct' ? ` (${e.referrer_host})` : ''}{e.utm_source ? ` · utm:${e.utm_source}` : ''}
+                  {e.video_id ? `▸ ${e.video_id}` : ''} {e.country ? `· ${e.country}` : ''}{(!e.country_source || e.country_source === 'client-locale') ? '~default' : ''} {e.device_type ? `· ${e.device_type}` : ''}{e.referral_group ? ` · ${e.referral_group}` : ''}{e.referrer_host && e.referrer_host !== 'Direct' ? ` (${e.referrer_host})` : ''}{e.utm_source ? ` · utm:${e.utm_source}` : ''}
                 </span>
                 <span className="text-[#8A8B91] ml-auto shrink-0">{formatTimeAgo(e.timestamp)}</span>
               </div>
