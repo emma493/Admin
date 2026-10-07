@@ -26,6 +26,11 @@ export interface UserDocument {
   appType?: AppType; // PWA Installed vs Web Browser
   isPWA?: boolean; // true when launched in standalone display mode
   referralGroup?: ReferralGroup; // normalized Direct/Google/Organic/Social
+  referrerHost?: string; // normalized hostname from document.referrer
+  utmSource?: string;
+  utmMedium?: string;
+  utmCampaign?: string;
+  landingPage?: string; // first pathname+search seen (merge-safe, set once ideally)
   countrySource?: 'client-locale' | 'ip-api' | 'manual'; // how country was resolved (no raw IP stored)
   // §2 Engagement & Consumption
   videosWatched?: number; // clips watched past 80% completion
@@ -122,9 +127,17 @@ export interface TelemetryEventDocument {
   timestamp: Timestamp | Date | number | any;
   user_agent?: string;
   device_type: DeviceType;
+  app_type?: AppType;
   video_id?: string;
   referrer?: string;
+  referral_group?: ReferralGroup;
+  referrer_host?: string;
+  utm_source?: string;
+  utm_medium?: string;
+  utm_campaign?: string;
+  landing_page?: string;
   country?: string;
+  country_source?: string;
   details?: string;
 }
 

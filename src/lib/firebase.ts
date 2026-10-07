@@ -122,6 +122,11 @@ export function subscribeToUsers(
           appType: (data.appType as AppType) || (data.isPWA === true ? 'PWA' : 'Browser'),
           isPWA: typeof data.isPWA === 'boolean' ? data.isPWA : data.appType === 'PWA',
           referralGroup: (data.referralGroup as ReferralGroup) || 'Direct',
+          referrerHost: data.referrerHost || data.referrer_host || '',
+          utmSource: data.utmSource || data.utm_source || '',
+          utmMedium: data.utmMedium || data.utm_medium || '',
+          utmCampaign: data.utmCampaign || data.utm_campaign || '',
+          landingPage: data.landingPage || data.landing_page || data.currentPage || '/',
           countrySource: data.countrySource || 'manual',
           videosWatched: typeof data.videosWatched === 'number' ? data.videosWatched : 0,
           totalSaves: typeof data.totalSaves === 'number' ? data.totalSaves : 0,
@@ -305,6 +310,21 @@ export async function updateVideoCreator(videoId: string, creatorId: string | nu
   try {
     const docRef = doc(db, VIDEOS_COLLECTION, videoId);
     await updateDoc(docRef, { creatorId });
+  } catch (err) {
+    handleFirestoreError(err, OperationType.UPDATE, `${VIDEOS_COLLECTION}/${videoId}`);
+    throw err;
+  }
+}
+
+/**
+ * Set a video's group label. Merge-safe single field — never touches views,
+ * likes, captions or linkage. Used by the legacy review queue backfill.
+ */
+export async function updateVideoCategory(videoId: string, category: 'girls' | 'couples'): Promise<void> {
+  if (!videoId) return;
+  try {
+    const docRef = doc(db, VIDEOS_COLLECTION, videoId);
+    await updateDoc(docRef, { category });
   } catch (err) {
     handleFirestoreError(err, OperationType.UPDATE, `${VIDEOS_COLLECTION}/${videoId}`);
     throw err;
@@ -623,9 +643,17 @@ export function subscribeToEvents(
           timestamp: data.timestamp || new Date(),
           user_agent: data.user_agent || '',
           device_type: (data.device_type as DeviceType) || 'Mobile',
+          app_type: (data.app_type as AppType) || undefined,
           video_id: data.video_id || '',
           referrer: data.referrer || 'Direct',
+          referral_group: (data.referral_group as ReferralGroup) || (data.referralGroup as ReferralGroup) || undefined,
+          referrer_host: data.referrer_host || data.referrerHost || '',
+          utm_source: data.utm_source || data.utmSource || '',
+          utm_medium: data.utm_medium || data.utmMedium || '',
+          utm_campaign: data.utm_campaign || data.utmCampaign || '',
+          landing_page: data.landing_page || data.landingPage || '',
           country: data.country || 'GH',
+          country_source: data.country_source || data.countrySource || '',
           details: data.details || '',
         };
       });
@@ -667,13 +695,121 @@ export function subscribeToRecentEvents(
           timestamp: data.timestamp || new Date(),
           user_agent: data.user_agent || '',
           device_type: (data.device_type as DeviceType) || 'Mobile',
+          app_type: (data.app_type as AppType) || undefined,
           video_id: data.video_id || '',
           referrer: data.referrer || 'Direct',
+          referral_group: (data.referral_group as ReferralGroup) || (data.referralGroup as ReferralGroup) || undefined,
+          referrer_host: data.referrer_host || data.referrerHost || '',
+          utm_source: data.utm_source || data.utmSource || '',
+          utm_medium: data.utm_medium || data.utmMedium || '',
+          utm_campaign: data.utm_campaign || data.utmCampaign || '',
+          landing_page: data.landing_page || data.landingPage || '',
           country: data.country || 'GH',
+          country_source: data.country_source || data.countrySource || '',
           details: data.details || '',
         };
       });
       onData(items);
+    },
+    (err) => {
+      handleFirestoreError(err, OperationType.LIST, EVENTS_COLLECTION);
+      if (onError) onError(err);
+    }
+  );
+}
+
+/**
+ * Subscribe to distinct visitor identities derived from video_view events.
+ * This is the source of truth for "Unique visitors" now that public user
+ * docs may lag (guest-only stubs) — events are always written by tracking.js.
+ * Returns lightweight {userId, timestamp} pairs for client-side date-range
+ * filtering + Set-based dedupe. Excludes ANONYMOUS.
+ */
+export function subscribeToEventVisitors(
+  onData: (visitors: { userId: string; timestamp: any }[]) => void,
+  onError?: (err: Error) => void
+) {
+  const eventsRef = collection(db, EVENTS_COLLECTION);
+  const q = query(eventsRef, where('event_type', '==', 'video_view'));
+  return onSnapshot(
+    q,
+    (snapshot) => {
+      const visitors: { userId: string; timestamp: any }[] = [];
+      snapshot.forEach((docSnap) => {
+        const data = docSnap.data();
+        const uid = data.userId || '';
+        if (!uid || uid === 'ANONYMOUS') return;
+        visitors.push({
+          userId: uid,
+          timestamp: data.timestamp || data.createdAt || new Date(),
+        });
+      });
+      onData(visitors);
+    },
+    (err) => {
+      handleFirestoreError(err, OperationType.LIST, EVENTS_COLLECTION);
+      if (onError) onError(err);
+    }
+  );
+}
+
+export interface ReferrerEvent {
+  userId: string;
+  timestamp: any;
+  referral_group: string;
+  referrer_host: string;
+  utm_source: string;
+  utm_medium: string;
+  utm_campaign: string;
+  video_id: string;
+  country: string;
+  country_source: string;
+}
+
+function hostFromReferrer(ref: string): string {
+  if (!ref || ref === 'Direct') return 'Direct';
+  try {
+    return new URL(ref).hostname.toLowerCase();
+  } catch {
+    return ref.slice(0, 120).toLowerCase();
+  }
+}
+
+/**
+ * Subscribe to lightweight video_view rows for advanced referrer analytics.
+ * Single-field query (no composite index). Caller dedupes + date-filters.
+ * Back-compat: old docs without referrer_host/UTM fall back to referrer parse.
+ */
+export function subscribeToReferrerEvents(
+  onData: (rows: ReferrerEvent[]) => void,
+  onError?: (err: Error) => void
+) {
+  const eventsRef = collection(db, EVENTS_COLLECTION);
+  const q = query(eventsRef, where('event_type', '==', 'video_view'));
+  return onSnapshot(
+    q,
+    (snapshot) => {
+      const rows: ReferrerEvent[] = [];
+      snapshot.forEach((docSnap) => {
+        const data = docSnap.data();
+        const host =
+          (data.referrer_host as string) ||
+          (data.referrerHost as string) ||
+          hostFromReferrer(data.referrer || '');
+        rows.push({
+          userId: data.userId || 'ANONYMOUS',
+          timestamp: data.timestamp || data.createdAt || new Date(),
+          referral_group: (data.referral_group as string) || (data.referralGroup as string) || 'Direct',
+          referrer_host: host || 'Direct',
+          utm_source: (data.utm_source as string) || (data.utmSource as string) || '',
+          utm_medium: (data.utm_medium as string) || (data.utmMedium as string) || '',
+          utm_campaign: (data.utm_campaign as string) || (data.utmCampaign as string) || '',
+          video_id: (data.video_id as string) || '',
+          country: (data.country as string) || 'GH',
+          country_source: (data.country_source as string) || (data.countrySource as string) || '',
+        });
+      });
+      onData(rows);
     },
     (err) => {
       handleFirestoreError(err, OperationType.LIST, EVENTS_COLLECTION);
@@ -699,9 +835,17 @@ export async function logTelemetryEvent(
     timestamp: eventData.timestamp || serverTimestamp(),
     user_agent: eventData.user_agent || (typeof navigator !== 'undefined' ? navigator.userAgent : ''),
     device_type: eventData.device_type || 'Mobile',
+    app_type: (eventData as any).app_type || undefined,
     video_id: eventData.video_id || '',
     referrer: eventData.referrer || (typeof document !== 'undefined' ? document.referrer : 'Direct'),
+    referral_group: (eventData as any).referral_group || undefined,
+    referrer_host: (eventData as any).referrer_host || '',
+    utm_source: (eventData as any).utm_source || '',
+    utm_medium: (eventData as any).utm_medium || '',
+    utm_campaign: (eventData as any).utm_campaign || '',
+    landing_page: (eventData as any).landing_page || '',
     country: eventData.country || 'GH',
+    country_source: (eventData as any).country_source || '',
     details: eventData.details || '',
   };
 

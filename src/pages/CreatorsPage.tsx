@@ -2,7 +2,7 @@ import { memo, useEffect, useMemo, useRef, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { ImagePlus, Loader2, Pencil, Plus, Trash2, X } from 'lucide-react';
+import { ImagePlus, Loader2, Pencil, Plus, Tags, Trash2, X } from 'lucide-react';
 import {
   subscribeToCreators,
   saveCreatorDoc,
@@ -251,10 +251,52 @@ export default function CreatorsPage() {
     reset();
   };
 
+  // Bulk backfill: ungrouped creators whose labeled videos have a clear
+  // majority get that group stamped explicitly. Ties / video-less creators
+  // stay unset for manual choice in the form.
+  const ungroupedMajority = useMemo(
+    () =>
+      creators
+        .map((c) => {
+          if (c.category) return null;
+          const counts = countsByCreator.get(c.id) ?? { girls: 0, couples: 0 };
+          if (counts.girls === counts.couples) return null;
+          return { c, group: (counts.girls > counts.couples ? 'girls' : 'couples') as VideoCategory };
+        })
+        .filter((x): x is { c: CreatorDocument; group: VideoCategory } => !!x),
+    [creators, countsByCreator]
+  );
+  const [assigningGroups, setAssigningGroups] = useState(false);
+  const [assignedMsg, setAssignedMsg] = useState('');
+
+  const onAssignMajority = async () => {
+    if (assigningGroups || ungroupedMajority.length === 0) return;
+    const girls = ungroupedMajority.filter((x) => x.group === 'girls').length;
+    const couples = ungroupedMajority.length - girls;
+    if (
+      !window.confirm(
+        `Stamp explicit groups on ${ungroupedMajority.length} ungrouped creators (${girls} girls, ${couples} couples) from their videos' majority?`
+      )
+    )
+      return;
+    setAssigningGroups(true);
+    setAssignedMsg('');
+    let ok = 0;
+    for (const { c, group } of ungroupedMajority) {
+      try {
+        await saveCreatorDoc({ id: c.id, username: c.username, avatarUrl: c.avatarUrl ?? '', category: group });
+        ok += 1;
+      } catch {
+        // Keep going — failures stay ungrouped for retry.
+      }
+    }
+    setAssigningGroups(false);
+    setAssignedMsg(`${ok}/${ungroupedMajority.length} creators grouped.`);
+  };
+
   // Delete with confirm + cascade: linked videos are unlinked (kept playable)
   // so no video ever dangles on a missing creator doc.
-  const onDelete = async (c: CreatorDocument) => {
-    const linked = videos.filter((v) => v.creatorId === c.id);
+  const onDelete = async (c: CreatorDocument) => {    const linked = videos.filter((v) => v.creatorId === c.id);
     const msg =
       linked.length > 0
         ? `Delete @${c.username}? Their ${linked.length} video${linked.length === 1 ? '' : 's'} will become Unlinked (kept, still playable).`
@@ -288,6 +330,25 @@ export default function CreatorsPage() {
           {showForm ? 'Close' : 'New creator'}
         </button>
       </div>
+      {ungroupedMajority.length > 0 && (
+        <div className="mt-4 rounded-[14px] p-4 flex items-center gap-3 flex-wrap" style={{ background: '#1E1F27', border: '1px solid rgba(255,255,255,0.08)' }}>
+          <Tags size={15} className="text-[#8A8B91] shrink-0" />
+          <p className="text-[#8A8B91] text-[13px] flex-1 min-w-[200px]">
+            {ungroupedMajority.length} creator{ungroupedMajority.length === 1 ? '' : 's'} without a group have a clear video majority.
+          </p>
+          <button
+            type="button"
+            disabled={assigningGroups}
+            onClick={onAssignMajority}
+            className="flex items-center gap-1.5 px-4 py-2 rounded-[10px] text-[13px] font-bold text-white disabled:opacity-50"
+            style={{ background: '#FF2B55' }}
+          >
+            {assigningGroups && <Loader2 size={13} className="animate-spin" />}
+            {assigningGroups ? 'Assigning…' : `Assign majority (${ungroupedMajority.length})`}
+          </button>
+          {assignedMsg && <span className="text-[#34d399] text-[12px] font-semibold">{assignedMsg}</span>}
+        </div>
+      )}
 
       {showForm && (
         <form

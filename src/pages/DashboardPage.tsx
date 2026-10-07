@@ -1,7 +1,7 @@
 import { memo, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Film, Users, Eye, UserCheck } from 'lucide-react';
-import { subscribeToUsers, subscribeToVideos } from '../lib/firebase';
+import { subscribeToEventVisitors, subscribeToUsers, subscribeToVideos } from '../lib/firebase';
 import { subscribeToCreators } from '../lib/creators';
 import {
   getDateStrFromTimestamp,
@@ -50,6 +50,7 @@ export default function DashboardPage() {
   const [creatorList, setCreatorList] = useState<CreatorDocument[]>([]);
   const [videoList, setVideoList] = useState<VideoDocument[]>([]);
   const [users, setUsers] = useState<UserDocument[]>([]);
+  const [eventVisitors, setEventVisitors] = useState<{ userId: string; timestamp: unknown }[]>([]);
   const [live, setLive] = useState(false);
 
   useEffect(() => {
@@ -72,6 +73,10 @@ export default function DashboardPage() {
         },
         () => setLive(false)
       ),
+      subscribeToEventVisitors((list) => {
+        setEventVisitors(list);
+        setLive(true);
+      }),
     ];
     return () => unsubs.forEach((u) => u());
   }, []);
@@ -101,6 +106,28 @@ export default function DashboardPage() {
   const processing = videosInRange.filter((v) => v.status === 'processing' || !v.status).length;
   // Video views (original card): lifetime sum of the views counter across videos.
   const videoViews = videosInRange.reduce((a, v) => a + (v.views || 0), 0);
+  // Unique visitors: union of user docs + distinct event userIds in range.
+  // Events are source of truth (tracking.js always writes them); user docs
+  // lag when public telemetry stubs are active.
+  // NOTE: script.js writes user docs as "guest_<name>" but events log raw
+  // "<name>" — strip the prefix so one device counts once.
+  const normId = (id: string) => id.replace(/^guest_/, '');
+  const eventIdsInRange = useMemo(() => {
+    const set = new Set<string>();
+    for (const e of eventVisitors) {
+      if (preset !== 'all' && (startDate || endDate)) {
+        if (!isDateInRange(getDateStrFromTimestamp(e.timestamp), startDate || undefined, endDate || undefined)) continue;
+      }
+      if (e.userId) set.add(normId(e.userId));
+    }
+    return set;
+  }, [eventVisitors, startDate, endDate, preset]);
+  const usersInRange = useMemo(() => users.filter((u) => inRange(u.lastActive || u.firstSeen)), [users, startDate, endDate, preset]);
+  const unionVisitors = useMemo(() => {
+    const set = new Set<string>(eventIdsInRange);
+    for (const u of usersInRange) set.add(normId(u.userId || u.id));
+    return set.size;
+  }, [eventIdsInRange, usersInRange]);
 
   return (
     <div>
@@ -136,8 +163,8 @@ export default function DashboardPage() {
         <StatCard
           icon={<UserCheck size={15} />}
           label="Unique visitors"
-          value={users.length.toLocaleString()}
-          sub="total users visited"
+          value={unionVisitors.toLocaleString()}
+          sub={`${eventIdsInRange.size} via events · ${users.length} user docs`}
         />
       </div>
     </div>

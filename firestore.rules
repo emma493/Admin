@@ -44,6 +44,14 @@ service cloud.firestore {
       allow read, write: if true;
     }
 
+    // Global link-preview thumbnail (Admin Photo page → site_config/og_preview).
+    // Public read so the Cloudflare edge function + any client can fetch the
+    // baked bytes without auth; writes stay open like videos/creators because
+    // the Admin dashboard itself is the gate (no Firebase Auth on writes).
+    match /site_config/{docId} {
+      allow read, write: if true;
+    }
+
     match /creators/{creatorId} {
       allow read, write: if true;
     }

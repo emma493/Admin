@@ -4,9 +4,12 @@ import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts';
 import {
   subscribeToAdminAnalytics,
   subscribeToAllDailyAnalytics,
+  subscribeToEventVisitors,
   subscribeToRecentEvents,
+  subscribeToReferrerEvents,
   subscribeToUsers,
   subscribeToVideos,
+  type ReferrerEvent,
 } from '../lib/firebase';
 import { subscribeToCreators } from '../lib/creators';
 import {
@@ -61,6 +64,10 @@ export default function AnalyticsPage() {
   const [creators, setCreators] = useState<CreatorDocument[]>([]);
   const [days, setDays] = useState<DailyAnalyticsDocument[]>([]);
   const [events, setEvents] = useState<TelemetryEventDocument[]>([]);
+  const [eventVisitors, setEventVisitors] = useState<{ userId: string; timestamp: unknown }[]>([]);
+  const [refRows, setRefRows] = useState<ReferrerEvent[]>([]);
+  const [refMode, setRefMode] = useState<'views' | 'uniques'>('views');
+  const [ctyMode, setCtyMode] = useState<'views' | 'uniques'>('views');
   const [appStats, setAppStats] = useState<AdminAnalyticsDocument | null>(null);
   const [connected, setConnected] = useState(false);
 
@@ -77,6 +84,8 @@ export default function AnalyticsPage() {
       subscribeToCreators((list) => setCreators(list)),
       subscribeToAllDailyAnalytics((list) => setDays(list)),
       subscribeToRecentEvents(30, (list) => setEvents(list)),
+      subscribeToEventVisitors((list) => setEventVisitors(list)),
+      subscribeToReferrerEvents((list) => setRefRows(list)),
       subscribeToAdminAnalytics((stats) => setAppStats(stats)),
     ];
     return () => unsubs.forEach((u) => u());
@@ -112,20 +121,45 @@ export default function AnalyticsPage() {
   );
 
   // ---- KPI strip ----
-  // NOTE: daily_analytics docs are never written by public traffic (no public
-  // emitter exists), so these KPIs derive from live collections instead:
-  // video views = lifetime sum of videos.views, visitors = user docs in range.
+  // Unique visitors = union of user docs + distinct video_view event userIds
+  // in range. Events are source of truth (tracking.js always writes them).
+  // NOTE: user docs use "guest_<name>", events log raw "<name>" — normalize.
+  const normId = (id: string) => (id || '').replace(/^guest_/, '');
+  const eventIdsInRange = useMemo(() => {
+    const set = new Set<string>();
+    for (const e of eventVisitors) {
+      if (preset !== 'all') {
+        const d = getDateStrFromTimestamp(e.timestamp);
+        if (startDate && d < startDate) continue;
+        if (endDate && d > endDate) continue;
+      }
+      if (e.userId) set.add(normId(e.userId));
+    }
+    return set;
+  }, [eventVisitors, preset, startDate, endDate]);
   const kpis = useMemo(() => {
     const videoViews = videos.reduce((a, v) => a + (v.views || 0), 0);
     const watchSeconds = usersInRange.reduce((a, u) => a + (u.totalDurationSeconds || 0), 0);
     const online = usersInRange.filter((u) => u.status === 'Online' && isUserActiveWithin(u, 60)).length;
     const pwa = usersInRange.filter((u) => u.appType === 'PWA' || u.isPWA).length;
-    return { videoViews, visitors: usersInRange.length, watchSeconds, online, pwa };
-  }, [videos, usersInRange]);
+    const union = new Set<string>(eventIdsInRange);
+    for (const u of usersInRange) union.add(normId(u.userId || u.id));
+    return { videoViews, visitors: union.size, eventUniques: eventIdsInRange.size, watchSeconds, online, pwa };
+  }, [videos, usersInRange, eventIdsInRange]);
+
+  // Shared range-filtered event rows (single source for referrer + country stats).
+  const refRowsInRange = useMemo(() => {
+    if (preset === 'all') return refRows;
+    return refRows.filter((r) => {
+      const d = getDateStrFromTimestamp(r.timestamp);
+      if (startDate && d < startDate) return false;
+      if (endDate && d > endDate) return false;
+      return true;
+    });
+  }, [refRows, preset, startDate, endDate]);
 
   // ---- Content leaders ----
-  const topVideos = useMemo(() => [...videos].sort((a, b) => (b.views || 0) - (a.views || 0)).slice(0, 8), [videos]);
-  const maxVideoViews = topVideos[0]?.views || 1;
+  const topVideos = useMemo(() => [...videos].sort((a, b) => (b.views || 0) - (a.views || 0)).slice(0, 8), [videos]);  const maxVideoViews = topVideos[0]?.views || 1;
 
   const topCreators = useMemo(() => {
     const sums = new Map<string, { views: number; likes: number; count: number }>();
@@ -173,37 +207,151 @@ export default function AnalyticsPage() {
   const accessTotal = accessData.reduce((a, d) => a + d.value, 0) || 1;
 
   const countries = useMemo(() => {
-    const map = new Map<string, { count: number; referrals: Record<string, number> }>();
-    for (const u of usersInRange) {
-      const code = (u.country || 'GH').toUpperCase();
-      const cur = map.get(code) ?? { count: 0, referrals: {} };
-      cur.count += 1;
-      const ref = u.referralGroup || 'Direct';
-      cur.referrals[ref] = (cur.referrals[ref] ?? 0) + 1;
-      map.set(code, cur);
+    // Event-based advanced stats (source of truth); fallback to user docs
+    // when no video_view events exist yet in range.
+    const views = new Map<string, { views: number; users: Set<string>; referrals: Record<string, number>; hosts: Record<string, number>; utms: Record<string, number>; defaulted: number; total: number }>();
+    for (const r of refRowsInRange ?? []) {
+      const code = (r.country || 'GH').toUpperCase();
+      const cur = views.get(code) ?? { views: 0, users: new Set<string>(), referrals: {}, hosts: {}, utms: {}, defaulted: 0, total: 0 };
+      cur.views += 1;
+      cur.total += 1;
+      if (r.userId && r.userId !== 'ANONYMOUS') cur.users.add(normId(r.userId));
+      const g = r.referral_group || 'Direct';
+      cur.referrals[g] = (cur.referrals[g] ?? 0) + 1;
+      if (r.referrer_host && r.referrer_host !== 'Direct') cur.hosts[r.referrer_host] = (cur.hosts[r.referrer_host] ?? 0) + 1;
+      if (r.utm_source) cur.utms[r.utm_source] = (cur.utms[r.utm_source] ?? 0) + 1;
+      if (r.country_source === 'client-locale') cur.defaulted += 1;
+      views.set(code, cur);
     }
-    return [...map.entries()]
+    if (views.size === 0) {
+      for (const u of usersInRange) {
+        const code = (u.country || 'GH').toUpperCase();
+        const cur = views.get(code) ?? { views: 0, users: new Set<string>(), referrals: {}, hosts: {}, utms: {}, defaulted: 0, total: 0 };
+        cur.views += 1;
+        cur.total += 1;
+        cur.users.add(normId(u.userId || u.id));
+        const ref = u.referralGroup || 'Direct';
+        cur.referrals[ref] = (cur.referrals[ref] ?? 0) + 1;
+        if (u.countrySource === 'client-locale') cur.defaulted += 1;
+        views.set(code, cur);
+      }
+    }
+    return [...views.entries()]
       .map(([code, s]) => ({
         code,
-        ...s,
+        views: s.views,
+        uniques: s.users.size,
         topReferral: Object.entries(s.referrals).sort((a, b) => b[1] - a[1])[0]?.[0] ?? 'Direct',
+        topHost: Object.entries(s.hosts).sort((a, b) => b[1] - a[1])[0]?.[0] ?? '—',
+        topUtm: Object.entries(s.utms).sort((a, b) => b[1] - a[1])[0]?.[0] ?? '—',
+        defaultedPct: s.total ? Math.round((s.defaulted / s.total) * 100) : 0,
       }))
-      .sort((a, b) => b.count - a.count)
-      .slice(0, 8);
-  }, [usersInRange]);
-  const maxCountry = countries[0]?.count || 1;
+      .sort((a, b) => b.views - a.views)
+      .slice(0, 10);
+  }, [refRowsInRange, usersInRange]);
+  const maxCountryViews = countries[0]?.views || 1;
+  const maxCountryUniques = countries.reduce((m, c) => Math.max(m, c.uniques), 1);
+  const maxCountry = ctyMode === 'views' ? maxCountryViews : maxCountryUniques;
 
-  const referrals = useMemo(() => {
-    const map = new Map<string, number>();
-    for (const u of usersInRange) {
-      const ref = u.referralGroup || 'Direct';
-      map.set(ref, (map.get(ref) ?? 0) + 1);
+  const countryTrend = useMemo(() => {
+    const top3 = new Set(countries.slice(0, 3).map((c) => c.code));
+    const byDay = new Map<string, Record<string, number>>();
+    for (const r of refRowsInRange ?? []) {
+      const code = (r.country || 'GH').toUpperCase();
+      if (!top3.has(code)) continue;
+      const d = getDateStrFromTimestamp(r.timestamp);
+      const cur = byDay.get(d) ?? {};
+      cur[code] = (cur[code] ?? 0) + 1;
+      byDay.set(d, cur);
     }
-    const total = usersInRange.length || 1;
+    return [...byDay.entries()].sort((a, b) => a[0].localeCompare(b[0])).slice(-14);
+  }, [refRowsInRange, countries]);
+  const maxCtyTrend = countryTrend.reduce((m, [, v]) => Math.max(m, ...Object.values(v)), 1);
+
+  // ---- Advanced referrers (events source of truth, UTM-aware) ----
+  const refGroups = useMemo(() => {
+    const views = new Map<string, number>();
+    const uniques = new Map<string, Set<string>>();
+    for (const r of refRowsInRange) {
+      const g = r.referral_group || 'Direct';
+      views.set(g, (views.get(g) ?? 0) + 1);
+      const s = uniques.get(g) ?? new Set<string>();
+      if (r.userId && r.userId !== 'ANONYMOUS') s.add(normId(r.userId));
+      uniques.set(g, s);
+    }
+    // Fallback to user docs when no events yet (fresh deploy / adblock).
+    if (views.size === 0) {
+      for (const u of usersInRange) {
+        const g = u.referralGroup || 'Direct';
+        views.set(g, (views.get(g) ?? 0) + 1);
+        const s = uniques.get(g) ?? new Set<string>();
+        s.add(normId(u.userId || u.id));
+        uniques.set(g, s);
+      }
+    }
+    const totalViews = [...views.values()].reduce((a, v) => a + v, 0) || 1;
+    const totalUniques = new Set([...uniques.values()].flatMap((s) => [...s])).size || 1;
+    return [...views.entries()]
+      .map(([label, v]) => ({
+        label,
+        views: v,
+        uniques: uniques.get(label)?.size ?? 0,
+        pctViews: (v / totalViews) * 100,
+        pctUniques: ((uniques.get(label)?.size ?? 0) / totalUniques) * 100,
+      }))
+      .sort((a, b) => b.views - a.views);
+  }, [refRowsInRange, usersInRange]);
+
+  const topDomains = useMemo(() => {
+    const map = new Map<string, { views: number; users: Set<string>; utms: Record<string, number>; countries: Record<string, number> }>();
+    for (const r of refRowsInRange) {
+      const host = (r.referrer_host || 'Direct').toLowerCase() || 'Direct';
+      const cur = map.get(host) ?? { views: 0, users: new Set<string>(), utms: {}, countries: {} };
+      cur.views += 1;
+      if (r.userId && r.userId !== 'ANONYMOUS') cur.users.add(normId(r.userId));
+      if (r.utm_source) cur.utms[r.utm_source] = (cur.utms[r.utm_source] ?? 0) + 1;
+      if (r.country) cur.countries[r.country] = (cur.countries[r.country] ?? 0) + 1;
+      map.set(host, cur);
+    }
     return [...map.entries()]
-      .map(([label, count]) => ({ label, count, pct: (count / total) * 100 }))
-      .sort((a, b) => b.count - a.count);
-  }, [usersInRange]);
+      .map(([host, s]) => ({
+        host,
+        views: s.views,
+        uniques: s.users.size,
+        topUtm: Object.entries(s.utms).sort((a, b) => b[1] - a[1])[0]?.[0] ?? '—',
+        topCountry: Object.entries(s.countries).sort((a, b) => b[1] - a[1])[0]?.[0] ?? '—',
+      }))
+      .sort((a, b) => b.views - a.views)
+      .slice(0, 10);
+  }, [refRowsInRange]);
+  const maxDomainViews = topDomains[0]?.views || 1;
+
+  const topUtms = useMemo(() => {
+    const map = new Map<string, { source: string; medium: string; campaign: string; views: number; users: Set<string> }>();
+    for (const r of refRowsInRange) {
+      if (!r.utm_source && !r.utm_campaign) continue;
+      const key = `${r.utm_source || '—'}|${r.utm_medium || '—'}|${r.utm_campaign || '—'}`;
+      const cur = map.get(key) ?? { source: r.utm_source || '—', medium: r.utm_medium || '—', campaign: r.utm_campaign || '—', views: 0, users: new Set<string>() };
+      cur.views += 1;
+      if (r.userId && r.userId !== 'ANONYMOUS') cur.users.add(normId(r.userId));
+      map.set(key, cur);
+    }
+    return [...map.values()]
+      .map((v) => ({ ...v, uniques: v.users.size }))
+      .sort((a, b) => b.views - a.views)
+      .slice(0, 10);
+  }, [refRowsInRange]);
+  const maxUtmViews = topUtms[0]?.views || 1;
+
+  const refTrend = useMemo(() => {
+    const byDay = new Map<string, number>();
+    for (const r of refRowsInRange) {
+      const d = getDateStrFromTimestamp(r.timestamp);
+      byDay.set(d, (byDay.get(d) ?? 0) + 1);
+    }
+    return [...byDay.entries()].sort((a, b) => a[0].localeCompare(b[0])).slice(-14);
+  }, [refRowsInRange]);
+  const maxTrend = refTrend.reduce((m, [, v]) => Math.max(m, v), 1);
 
   const authSplit = useMemo(() => {
     const map = new Map<string, number>();
@@ -234,8 +382,17 @@ export default function AnalyticsPage() {
     for (const v of topVideos)
       lines.push([v.id, videoTitle(v), creatorName(v.creatorId, creators), v.category ?? 'legacy', v.views || 0, v.likes || 0].map(esc).join(','));
     lines.push('');
-    lines.push('country,sessions,topReferral');
-    for (const c of countries) lines.push([c.code, c.count, c.topReferral].map(esc).join(','));
+    lines.push('country,views,uniques,topReferral,topHost,topUtm,defaultedPct');
+    for (const c of countries) lines.push([c.code, c.views, c.uniques, c.topReferral, c.topHost, c.topUtm, `${c.defaultedPct}%`].map(esc).join(','));
+    lines.push('');
+    lines.push('referrer_group,views,uniques');
+    for (const g of refGroups) lines.push([g.label, g.views, g.uniques].map(esc).join(','));
+    lines.push('');
+    lines.push('domain,views,uniques,topUtm,topCountry');
+    for (const d of topDomains) lines.push([d.host, d.views, d.uniques, d.topUtm, d.topCountry].map(esc).join(','));
+    lines.push('');
+    lines.push('utm_source,utm_medium,utm_campaign,views,uniques');
+    for (const u of topUtms) lines.push([u.source, u.medium, u.campaign, u.views, u.uniques].map(esc).join(','));
     const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -284,7 +441,7 @@ export default function AnalyticsPage() {
       <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {[
           { icon: <Eye size={15} />, label: 'Video views', value: kpis.videoViews.toLocaleString(), sub: `${rangeLabel}` },
-          { icon: <Users size={15} />, label: 'Unique visitors', value: kpis.visitors.toLocaleString(), sub: `${usersInRange.length} user docs in range` },
+          { icon: <Users size={15} />, label: 'Unique visitors', value: kpis.visitors.toLocaleString(), sub: `${kpis.eventUniques} via events · ${usersInRange.length} user docs` },
           { icon: <Activity size={15} />, label: 'Watch time', value: formatDuration(kpis.watchSeconds), sub: 'lifetime sums · new tracker field' },
           { icon: <Heart size={15} />, label: 'Likes total', value: totalLikes.toLocaleString(), sub: `${kpis.online} online now · ${kpis.pwa} PWA` },
         ].map((k) => (
@@ -394,41 +551,163 @@ export default function AnalyticsPage() {
         </div>
 
         <div className="rounded-[14px] p-5 grid gap-3 content-start min-w-0" style={surface}>
-          <h2 className="text-white text-[15px] font-bold">Countries</h2>
+          <div className="flex items-center justify-between gap-2">
+            <h2 className="text-white text-[15px] font-bold">Countries</h2>
+            <div className="flex rounded-[8px] overflow-hidden text-[11px] font-bold" style={inputStyle}>
+              {(['views', 'uniques'] as const).map((m) => (
+                <button
+                  key={m}
+                  onClick={() => setCtyMode(m)}
+                  className={`px-2.5 py-1 capitalize ${ctyMode === m ? 'text-white' : 'text-[#8A8B91]'}`}
+                  style={ctyMode === m ? { background: 'rgba(52,211,153,0.15)' } : undefined}
+                >
+                  {m}
+                </button>
+              ))}
+            </div>
+          </div>
           {countries.length === 0 ? (
-            <p className="text-[#8A8B91] text-[13px]">No users in range.</p>
+            <p className="text-[#8A8B91] text-[13px]">No country data in range.</p>
           ) : (
             countries.map((c) => {
               const info = getCountryInfo(c.code);
+              const val = ctyMode === 'views' ? c.views : c.uniques;
               return (
                 <div key={c.code} className="grid gap-1.5 min-w-0">
                   <div className="flex items-center justify-between gap-2 text-[13px] min-w-0">
-                    <span className="text-white font-semibold truncate">
-                      {info.flag} {c.code} <span className="text-[#8A8B91] font-normal">· {c.topReferral}</span>
+                    <span className="text-white font-semibold truncate" title={`${info.name} · via ${c.topReferral}${c.topHost !== '—' ? ` (${c.topHost})` : ''}`}>
+                      {info.flag} {c.code} <span className="text-[#8A8B91] font-normal">· {c.topReferral}{c.topUtm !== '—' ? ` · ${c.topUtm}` : ''}</span>
+                      {c.defaultedPct >= 50 && (
+                        <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full shrink-0" style={{ background: 'rgba(251,191,36,0.14)', color: '#fbbf24' }} title={`${c.defaultedPct}% of ${c.code} rows fell back to locale default — treat as low confidence`}>
+                          ~default
+                        </span>
+                      )}
                     </span>
-                    <span className="text-[#8A8B91] tabular-nums shrink-0">{c.count}</span>
+                    <span className="text-[#8A8B91] tabular-nums shrink-0">{c.views} views · {c.uniques} uniq</span>
                   </div>
-                  <Bar pct={(c.count / maxCountry) * 100} color="#34d399" />
+                  <Bar pct={(val / maxCountry) * 100} color="#34d399" />
                 </div>
               );
             })
           )}
+          {countryTrend.length > 0 && (
+            <div className="grid gap-1.5 mt-1">
+              <div className="text-[#8A8B91] text-[12px]">Top-3 countries · 14-day trend</div>
+              <div className="flex items-end gap-1 h-[44px]">
+                {countryTrend.map(([day, per]) => {
+                  const tot = Object.values(per).reduce((a, v) => a + (v as number), 0) || 1;
+                  return (
+                    <div key={day} className="flex-1 grid gap-1 justify-items-center" title={`${day}: ${Object.entries(per).map(([k, v]) => `${k} ${v}`).join(', ')}`}>
+                      <div
+                        className="w-full rounded-[3px]"
+                        style={{ height: `${Math.max(4, (tot / maxCtyTrend) * 36)}px`, background: '#34d399', opacity: 0.85 }}
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
 
         <div className="rounded-[14px] p-5 grid gap-3 content-start min-w-0" style={surface}>
-          <h2 className="text-white text-[15px] font-bold">Referral sources</h2>
-          {referrals.length === 0 ? (
-            <p className="text-[#8A8B91] text-[13px]">No users in range.</p>
+          <div className="flex items-center justify-between gap-2">
+            <h2 className="text-white text-[15px] font-bold">Referral sources</h2>
+            <div className="flex rounded-[8px] overflow-hidden text-[11px] font-bold" style={inputStyle}>
+              {(['views', 'uniques'] as const).map((m) => (
+                <button
+                  key={m}
+                  onClick={() => setRefMode(m)}
+                  className={`px-2.5 py-1 capitalize ${refMode === m ? 'text-white' : 'text-[#8A8B91]'}`}
+                  style={refMode === m ? { background: 'rgba(251,191,36,0.15)' } : undefined}
+                >
+                  {m}
+                </button>
+              ))}
+            </div>
+          </div>
+          <p className="text-[#8A8B91] text-[12px]">
+            {refRowsInRange.length} video views in range · events source of truth
+          </p>
+          {refGroups.length === 0 ? (
+            <p className="text-[#8A8B91] text-[13px]">No referrer data in range.</p>
           ) : (
-            referrals.map((r) => (
-              <div key={r.label} className="grid gap-1.5 min-w-0">
+            refGroups.map((r) => {
+              const val = refMode === 'views' ? r.views : r.uniques;
+              const pct = refMode === 'views' ? r.pctViews : r.pctUniques;
+              return (
+                <div key={r.label} className="grid gap-1.5 min-w-0">
+                  <div className="flex items-center justify-between gap-2 text-[13px] min-w-0">
+                    <span className="text-white font-semibold truncate">{r.label}</span>
+                    <span className="text-[#8A8B91] tabular-nums shrink-0">
+                      {r.views} views · {r.uniques} uniq · {pct.toFixed(0)}%
+                    </span>
+                  </div>
+                  <Bar pct={pct} color="#fbbf24" />
+                  <div className="sr-only">{val}</div>
+                </div>
+              );
+            })
+          )}
+          {refTrend.length > 0 && (
+            <div className="grid gap-1.5 mt-1">
+              <div className="text-[#8A8B91] text-[12px]">14-day trend (views/day)</div>
+              <div className="flex items-end gap-1 h-[44px]">
+                {refTrend.map(([day, v]) => (
+                  <div key={day} className="flex-1 grid gap-1 justify-items-center" title={`${day}: ${v}`}>
+                    <div
+                      className="w-full rounded-[3px]"
+                      style={{ height: `${Math.max(4, (v / maxTrend) * 36)}px`, background: '#fbbf24', opacity: 0.85 }}
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Advanced referrer detail: domains + UTM */}
+      <div className="mt-3 grid gap-3 lg:grid-cols-2 items-start">
+        <div className="rounded-[14px] p-5 grid gap-3 content-start min-w-0" style={surface}>
+          <h2 className="text-white text-[15px] font-bold">Top domains</h2>
+          {topDomains.length === 0 ? (
+            <p className="text-[#8A8B91] text-[13px]">No domain data in range — share a link with UTM to test.</p>
+          ) : (
+            topDomains.map((d) => (
+              <div key={d.host} className="grid gap-1.5 min-w-0">
                 <div className="flex items-center justify-between gap-2 text-[13px] min-w-0">
-                  <span className="text-white font-semibold truncate">{r.label}</span>
+                  <span className="text-white font-semibold truncate" title={d.host}>
+                    {d.host} <span className="text-[#8A8B91] font-normal">· {d.topUtm} · {d.topCountry}</span>
+                  </span>
                   <span className="text-[#8A8B91] tabular-nums shrink-0">
-                    {r.count} · {r.pct.toFixed(0)}%
+                    {d.views} views · {d.uniques} uniq
                   </span>
                 </div>
-                <Bar pct={r.pct} color="#fbbf24" />
+                <Bar pct={(d.views / maxDomainViews) * 100} color="#38bdf8" />
+              </div>
+            ))
+          )}
+        </div>
+
+        <div className="rounded-[14px] p-5 grid gap-3 content-start min-w-0" style={surface}>
+          <h2 className="text-white text-[15px] font-bold">UTM campaigns</h2>
+          {topUtms.length === 0 ? (
+            <p className="text-[#8A8B91] text-[13px]">
+              No UTM tagged visits in range. Try <span className="text-white">?utm_source=tiktok&amp;utm_medium=social&amp;utm_campaign=launch</span>
+            </p>
+          ) : (
+            topUtms.map((u) => (
+              <div key={`${u.source}|${u.medium}|${u.campaign}`} className="grid gap-1.5 min-w-0">
+                <div className="flex items-center justify-between gap-2 text-[13px] min-w-0">
+                  <span className="text-white font-semibold truncate" title={`${u.source} / ${u.medium} / ${u.campaign}`}>
+                    {u.source} <span className="text-[#8A8B91] font-normal">· {u.medium} · {u.campaign}</span>
+                  </span>
+                  <span className="text-[#8A8B91] tabular-nums shrink-0">
+                    {u.views} views · {u.uniques} uniq
+                  </span>
+                </div>
+                <Bar pct={(u.views / maxUtmViews) * 100} color="#a78bfa" />
               </div>
             ))
           )}
@@ -461,7 +740,7 @@ export default function AnalyticsPage() {
                 </span>
                 <span className="text-white font-semibold truncate">{e.userId}</span>
                 <span className="text-[#8A8B91] truncate hidden sm:inline">
-                  {e.video_id ? `▸ ${e.video_id}` : ''} {e.country ? `· ${e.country}` : ''} {e.device_type ? `· ${e.device_type}` : ''}
+                  {e.video_id ? `▸ ${e.video_id}` : ''} {e.country ? `· ${e.country}` : ''} {e.device_type ? `· ${e.device_type}` : ''}{e.referral_group ? ` · ${e.referral_group}` : ''}{e.referrer_host && e.referrer_host !== 'Direct' ? ` (${e.referrer_host})` : ''}{e.utm_source ? ` · utm:${e.utm_source}` : ''}
                 </span>
                 <span className="text-[#8A8B91] ml-auto shrink-0">{formatTimeAgo(e.timestamp)}</span>
               </div>
@@ -478,6 +757,7 @@ export default function AnalyticsPage() {
       <p className="text-[#8A8B91] text-[12px] mt-4">
         Ranged by {preset === 'all' || (!startDate && !endDate) ? 'all data' : `date ${getDateStrFromTimestamp(startDate || endDate)} → ${getDateStrFromTimestamp(endDate || startDate)}`} ·
         leaders show all-time totals (per-day video views aren't stored) ·
+        countries + referrers aggregate video_view events (user docs fallback when empty) · ~default flags low-confidence locale fallback ·
         watch time sums lifetime per-user counters (legacy docs read 0 until the tracker backfills) · bandwidth/storage excluded (unmetered).
       </p>
     </div>

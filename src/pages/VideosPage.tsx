@@ -1,9 +1,10 @@
 import { memo, useEffect, useMemo, useState } from 'react';
-import { Clapperboard, Eye, Heart, Loader2, Search, Trash2 } from 'lucide-react';
+import { Clapperboard, Eye, Heart, Loader2, Search, Trash2, Tags } from 'lucide-react';
 import {
   subscribeToVideos,
   deleteVideoDoc,
   toggleVideoStatus,
+  updateVideoCategory,
 } from '../lib/firebase';
 import { subscribeToCreators } from '../lib/creators';
 import type { CreatorDocument, VideoCategory, VideoDocument } from '../types';
@@ -27,13 +28,17 @@ const VideoRow = memo(function VideoRow({
   creatorLabel,
   onToggle,
   onDelete,
+  onAssign,
   busy,
+  assignBusy,
 }: {
   v: VideoDocument;
   creatorLabel: string;
   onToggle: (id: string, current: boolean) => void;
   onDelete: (id: string) => void;
+  onAssign: (id: string, category: VideoCategory) => void;
   busy: boolean;
+  assignBusy: boolean;
 }) {
   const hls = hlsLabel(v);
   return (
@@ -78,7 +83,7 @@ const VideoRow = memo(function VideoRow({
         </span>
       </div>
 
-      <div className="flex items-center gap-2">
+      <div className="flex items-center gap-2 flex-wrap">
         <button
           type="button"
           disabled={busy}
@@ -88,6 +93,20 @@ const VideoRow = memo(function VideoRow({
         >
           {v.is_active ? 'Hide' : 'Show'}
         </button>
+        {!v.category &&
+          (['girls', 'couples'] as VideoCategory[]).map((g) => (
+            <button
+              key={g}
+              type="button"
+              disabled={assignBusy || busy}
+              onClick={() => onAssign(v.id, g)}
+              className="px-3.5 py-1.5 rounded-[8px] text-[12px] font-bold capitalize text-[#E1E2E6] hover:text-white hover:bg-white/[0.08] disabled:opacity-50"
+              style={{ background: '#16171D', border: '1px solid rgba(255,43,85,0.4)' }}
+              title={`Label this video ${g}`}
+            >
+              {g}
+            </button>
+          ))}
         <button
           type="button"
           disabled={busy}
@@ -102,7 +121,7 @@ const VideoRow = memo(function VideoRow({
   );
 });
 
-type CategoryFilter = 'all' | VideoCategory;
+type CategoryFilter = 'all' | VideoCategory | 'legacy';
 
 export default function VideosPage() {
   const [videos, setVideos] = useState<VideoDocument[]>([]);
@@ -112,7 +131,10 @@ export default function VideosPage() {
   const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>('all');
   const [query, setQuery] = useState('');
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [assignId, setAssignId] = useState<string | null>(null);
   const [confirmId, setConfirmId] = useState<string | null>(null);
+  const [labelBusy, setLabelBusy] = useState(false);
+  const [labelDone, setLabelDone] = useState<string | null>(null);
 
   useEffect(() => {
     const unsubs = [
@@ -136,7 +158,11 @@ export default function VideosPage() {
       } else if (creatorFilter !== 'all' && v.creatorId !== creatorFilter) {
         return false;
       }
-      if (categoryFilter !== 'all' && v.category !== categoryFilter) return false;
+      if (categoryFilter === 'legacy') {
+        if (v.category) return false;
+      } else if (categoryFilter !== 'all' && v.category !== categoryFilter) {
+        return false;
+      }
       if (q) {
         const hay = [v.caption ?? '', (v.hashtags ?? []).join(' '), v.direct_url, creatorName(v.creatorId, creators)]
           .join(' ')
@@ -146,6 +172,26 @@ export default function VideosPage() {
       return true;
     });
   }, [videos, creators, creatorFilter, categoryFilter, query]);
+
+  // Legacy review queue: unlabeled videos + how many can auto-label from
+  // their linked creator's explicit group.
+  const legacyVideos = useMemo(() => videos.filter((v) => !v.category), [videos]);
+  const autoLabelable = useMemo(() => {
+    const byCreator = new Map(creators.map((c) => [c.id, c.category]));
+    return legacyVideos.filter((v) => {
+      const g = v.creatorId ? byCreator.get(v.creatorId) : undefined;
+      return g === 'girls' || g === 'couples';
+    });
+  }, [legacyVideos, creators]);
+  const groupCounts = useMemo(() => {
+    let girls = 0;
+    let couples = 0;
+    for (const v of videos) {
+      if (v.category === 'girls') girls += 1;
+      else if (v.category === 'couples') couples += 1;
+    }
+    return { girls, couples, legacy: legacyVideos.length };
+  }, [videos, legacyVideos]);
 
   const counts = useMemo(() => {
     const perCreator = new Map<string, number>();
@@ -166,6 +212,44 @@ export default function VideosPage() {
   };
 
   const onDelete = (id: string) => setConfirmId(id);
+
+  const onAssign = async (id: string, category: VideoCategory) => {
+    setAssignId(id);
+    try {
+      await updateVideoCategory(id, category);
+    } finally {
+      setAssignId(null);
+    }
+  };
+
+  // Bulk backfill: label every legacy video whose linked creator already has
+  // an explicit group. Merge-safe single-field writes; the rest stay legacy
+  // for manual review via the per-row buttons.
+  const onAutoLabel = async () => {
+    if (labelBusy || autoLabelable.length === 0) return;
+    if (
+      !window.confirm(
+        `Label ${autoLabelable.length} video${autoLabelable.length === 1 ? '' : 's'} from their creators' groups? Unlinked/ungrouped videos stay legacy.`
+      )
+    )
+      return;
+    setLabelBusy(true);
+    setLabelDone(null);
+    const byCreator = new Map(creators.map((c) => [c.id, c.category]));
+    let ok = 0;
+    for (const v of autoLabelable) {
+      const g = v.creatorId ? byCreator.get(v.creatorId) : undefined;
+      if (g !== 'girls' && g !== 'couples') continue;
+      try {
+        await updateVideoCategory(v.id, g);
+        ok += 1;
+      } catch {
+        // Keep going — failures stay legacy for retry.
+      }
+    }
+    setLabelBusy(false);
+    setLabelDone(`${ok}/${autoLabelable.length} labeled from creator groups.`);
+  };
 
   const confirmDelete = async () => {
     if (!confirmId) return;
@@ -215,20 +299,28 @@ export default function VideosPage() {
           <div className="grid gap-1.5 min-w-0 max-w-full">
             <span className="text-[#E1E2E6] text-[12px] font-bold uppercase tracking-[0.1em]">Group</span>
             <div className="flex gap-2 flex-wrap min-w-0">
-              {(['all', 'girls', 'couples'] as CategoryFilter[]).map((g) => (
+              {(
+                [
+                  { value: 'all', label: 'All', count: videos.length },
+                  { value: 'girls', label: 'Girls', count: groupCounts.girls },
+                  { value: 'couples', label: 'Couples', count: groupCounts.couples },
+                  { value: 'legacy', label: 'Legacy', count: groupCounts.legacy },
+                ] as { value: CategoryFilter; label: string; count: number }[]
+              ).map((g) => (
                 <button
-                  key={g}
+                  key={g.value}
                   type="button"
-                  onClick={() => setCategoryFilter(g)}
-                  aria-pressed={categoryFilter === g}
+                  onClick={() => setCategoryFilter(g.value)}
+                  aria-pressed={categoryFilter === g.value}
                   className="flex-1 min-w-0 px-3 py-2 rounded-[10px] text-[13px] font-bold capitalize truncate"
                   style={
-                    categoryFilter === g
+                    categoryFilter === g.value
                       ? { background: '#FF2B55', color: '#fff' }
                       : { background: '#16171D', color: '#A1A2A7', border: '1px solid rgba(255,255,255,0.1)' }
                   }
+                  title={`${g.count} videos`}
                 >
-                  {g}
+                  {g.label} · {g.count}
                 </button>
               ))}
             </div>
@@ -251,6 +343,40 @@ export default function VideosPage() {
 
         {/* List */}
         <div className="grid gap-3 content-start min-w-0 max-w-full">
+          {legacyVideos.length > 0 && (
+            <div className="rounded-[14px] p-4 grid gap-2" style={surface}>
+              <div className="flex items-center gap-2 text-white text-[14px] font-bold">
+                <Tags size={15} />
+                {legacyVideos.length} unlabeled video{legacyVideos.length === 1 ? '' : 's'}
+              </div>
+              <p className="text-[#8A8B91] text-[13px]">
+                {autoLabelable.length > 0
+                  ? `${autoLabelable.length} can auto-label from their creators' groups. The rest need a manual pick below.`
+                  : 'None link to a grouped creator — pick a group per video below.'}
+              </p>
+              <div className="flex items-center gap-2 flex-wrap">
+                <button
+                  type="button"
+                  disabled={labelBusy || autoLabelable.length === 0}
+                  onClick={onAutoLabel}
+                  className="px-4 py-2 rounded-[10px] text-[13px] font-bold text-white disabled:opacity-40 flex items-center gap-1.5"
+                  style={{ background: '#FF2B55' }}
+                >
+                  {labelBusy && <Loader2 size={13} className="animate-spin" />}
+                  {labelBusy ? 'Labeling…' : `Auto-label ${autoLabelable.length} from creators`}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setCategoryFilter('legacy')}
+                  className="px-4 py-2 rounded-[10px] text-[13px] font-bold text-[#E1E2E6] hover:text-white"
+                  style={{ background: '#16171D', border: '1px solid rgba(255,255,255,0.1)' }}
+                >
+                  Review queue
+                </button>
+                {labelDone && <span className="text-[#34d399] text-[12px] font-semibold">{labelDone}</span>}
+              </div>
+            </div>
+          )}
           {filtered.length === 0 && connected ? (
             <div
               className="rounded-[14px] p-10 text-center text-[#8A8B91] text-[14px] flex flex-col items-center gap-2"
@@ -267,7 +393,9 @@ export default function VideosPage() {
                 creatorLabel={creatorName(v.creatorId, creators)}
                 onToggle={onToggle}
                 onDelete={onDelete}
+                onAssign={onAssign}
                 busy={busyId === v.id}
+                assignBusy={assignId === v.id}
               />
             ))
           )}

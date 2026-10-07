@@ -1,11 +1,11 @@
 import { memo, useEffect, useMemo, useState } from 'react';
 import { Link2, Loader2, UploadCloud } from 'lucide-react';
-import { saveVideoDoc } from '../lib/firebase';
+import { saveVideoDoc, subscribeToVideos } from '../lib/firebase';
 import { subscribeToCreators, resolveCreatorBadge } from '../lib/creators';
 import type { CreatorBadge } from '../lib/creators';
 import { extractLinksFromString } from '../lib/videoUtils';
 import { suggestFor } from '../lib/captionAI';
-import type { CreatorDocument, VideoCategory } from '../types';
+import type { CreatorDocument, VideoCategory, VideoDocument } from '../types';
 
 const surface = { background: '#1E1F27', border: '1px solid rgba(255,255,255,0.08)' };
 
@@ -70,8 +70,12 @@ const CreatorPick = memo(function CreatorPick({
 
 export default function UploadPage() {
   const [creators, setCreators] = useState<CreatorDocument[]>([]);
+  const [videoList, setVideoList] = useState<VideoDocument[]>([]);
   const [selected, setSelected] = useState<string[]>([]);
   const [category, setCategory] = useState<VideoCategory>('girls');
+  // True once the owner manually picks a batch group — auto-majority only
+  // runs until then, so an explicit choice is never overridden.
+  const [touchedGroup, setTouchedGroup] = useState(false);
   const [raw, setRaw] = useState('');
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(0);
@@ -79,7 +83,14 @@ export default function UploadPage() {
   const [failed, setFailed] = useState<string[]>([]);
   const [finished, setFinished] = useState(false);
 
-  useEffect(() => subscribeToCreators((list) => setCreators(list)), []);
+  useEffect(
+    () =>
+      subscribeToCreators((list) => {
+        setCreators(list);
+      }),
+    []
+  );
+  useEffect(() => subscribeToVideos((list) => setVideoList(list)), []);
 
   const links = useMemo(() => extractLinksFromString(raw), [raw]);
 
@@ -89,8 +100,45 @@ export default function UploadPage() {
   const perCreator = selected.length > 0 ? Math.ceil(links.length / selected.length) : 0;
   const canSubmit = !busy && selected.length > 0 && links.length > 0;
 
-  const groupOf = (c: CreatorDocument): CreatorBadge =>
-    resolveCreatorBadge(c.category, 0, 0);
+  // Per-creator labeled-video counts (same resolution as the Creators page:
+  // explicit choice wins, otherwise video majority). Previously this passed
+  // 0/0, so ungrouped creators showed no badge and silently skipped the guard.
+  const countsByCreator = useMemo(() => {
+    const counts = new Map<string, { girls: number; couples: number }>();
+    for (const v of videoList) {
+      if (!v.creatorId) continue;
+      if (v.category !== 'girls' && v.category !== 'couples') continue;
+      const cur = counts.get(v.creatorId) ?? { girls: 0, couples: 0 };
+      if (v.category === 'girls') cur.girls += 1;
+      else cur.couples += 1;
+      counts.set(v.creatorId, cur);
+    }
+    return counts;
+  }, [videoList]);
+
+  const groupOf = (c: CreatorDocument): CreatorBadge => {
+    const counts = countsByCreator.get(c.id) ?? { girls: 0, couples: 0 };
+    return resolveCreatorBadge(c.category, counts.girls, counts.couples);
+  };
+
+  // Auto-default the batch group to the majority of selected creators'
+  // resolved badges (ties / all-unknown keep the current value).
+  useEffect(() => {
+    if (touchedGroup || selected.length === 0) return;
+    let girls = 0;
+    let couples = 0;
+    for (const id of selected) {
+      const c = creators.find((x) => x.id === id);
+      if (!c) continue;
+      const g = groupOf(c);
+      if (g === 'Girls') girls += 1;
+      else if (g === 'Couples') couples += 1;
+    }
+    const majority: VideoCategory | null =
+      girls > couples ? 'girls' : couples > girls ? 'couples' : null;
+    if (majority && majority !== category) setCategory(majority);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected, creators, countsByCreator, touchedGroup]);
 
   // Warn-only mismatch guard: batch group vs each selected creator's group.
   const mismatched = selected
@@ -187,7 +235,10 @@ export default function UploadPage() {
               <button
                 key={g}
                 type="button"
-                onClick={() => setCategory(g)}
+                onClick={() => {
+                  setCategory(g);
+                  setTouchedGroup(true);
+                }}
                 aria-pressed={category === g}
                 className="px-5 py-2.5 rounded-[10px] text-[14px] font-bold capitalize transition-colors"
                 style={

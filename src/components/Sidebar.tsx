@@ -1,5 +1,5 @@
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, LogOut, UploadCloud, Users, Clapperboard, UserRound, ChartNoAxesColumn } from 'lucide-react';
+import { LayoutDashboard, LogOut, UploadCloud, Users, Clapperboard, UserRound, ChartNoAxesColumn, Image as ImageIcon } from 'lucide-react';
 
 const linkBase =
   'flex items-center gap-3 px-3.5 py-2.5 rounded-[10px] text-[14px] font-semibold transition-colors no-underline';
@@ -44,6 +44,13 @@ export default function Sidebar({ onLogout }: { onLogout: () => void }) {
         >
           <UploadCloud size={18} strokeWidth={2.2} />
           Upload
+        </NavLink>
+        <NavLink
+          to="/photo"
+          className={({ isActive }) => `${linkBase} ${isActive ? linkActive : linkIdle}`}
+        >
+          <ImageIcon size={18} strokeWidth={2.2} />
+          Photo
         </NavLink>
         <NavLink
           to="/users"
