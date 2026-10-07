@@ -8,6 +8,18 @@
 export const PREVIEW_W = 1200;
 export const PREVIEW_H = 630;
 
+/**
+ * Random fake-video duration for the pill, e.g. "2:56".
+ * Minutes skew low (1-4 most common, up to 9); seconds zero-padded.
+ * A fresh value is pre-filled on every Generate; still editable in the UI.
+ */
+export function randomDuration(): string {
+  const r = Math.random();
+  const mins = r < 0.45 ? 1 + Math.floor(Math.random() * 3) : r < 0.8 ? 4 + Math.floor(Math.random() * 3) : 7 + Math.floor(Math.random() * 3);
+  const secs = Math.floor(Math.random() * 60);
+  return `${mins}:${String(secs).padStart(2, '0')}`;
+}
+
 function loadImage(url: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const img = new Image();

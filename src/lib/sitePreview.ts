@@ -7,8 +7,10 @@ export const OG_PREVIEW_DOC = 'og_preview';
 export interface OgPreviewData {
   /** Original photo URL pasted in Admin (bake source only, never hotlinked publicly). */
   sourceUrl: string;
-  /** Fully composited 1200x630 thumbnail (play button + duration pill) as dataURL. */
-  imageData: string;
+  /** Baked 1200x630 thumbnail (play button + duration pill) on Cloudinary CDN. */
+  imageUrl: string;
+  /** Cloudinary public ID (for future server-side cleanup). */
+  publicId: string;
   /** Fake duration pill text, e.g. "2:56". */
   duration: string;
   updatedAt: unknown;
@@ -17,6 +19,7 @@ export interface OgPreviewData {
 /**
  * Live-subscribe to the global link-preview thumbnail.
  * Single-doc listener — no composite index, negligible Firestore reads.
+ * Tolerates legacy docs that still carry base64 `imageData` (pre-Cloudinary).
  */
 export function subscribeToOgPreview(
   onData: (preview: OgPreviewData | null) => void,
@@ -31,13 +34,17 @@ export function subscribeToOgPreview(
         return;
       }
       const data = snap.data();
-      if (!data.imageData || !data.sourceUrl) {
+      // Legacy (pre-Cloudinary) docs stored baked bytes inline — still usable.
+      const legacy = typeof data.imageData === 'string' && data.imageData.startsWith('data:image/');
+      const imageUrl = data.imageUrl || (legacy ? data.imageData : '');
+      if (!imageUrl || !data.sourceUrl) {
         onData(null);
         return;
       }
       onData({
         sourceUrl: data.sourceUrl || '',
-        imageData: data.imageData || '',
+        imageUrl,
+        publicId: data.publicId || '',
         duration: data.duration || '',
         updatedAt: data.updatedAt || null,
       });
@@ -50,33 +57,32 @@ export function subscribeToOgPreview(
 }
 
 /**
- * Publish a new global preview. No Firebase Storage involved (Spark-plan
- * safe): the Admin browser bakes the play button + duration pill into pixels
- * via canvas, and the resulting JPEG dataURL (~100-250KB) is stored inline.
- * The Cloudflare edge function serves those bytes as /og-preview.png.
+ * Publish a new global preview. The baked pixels already live on Cloudinary
+ * (uploaded from the Admin browser via unsigned preset) — Firestore keeps
+ * only the CDN URL, a few hundred bytes. The Cloudflare edge function points
+ * crawlers' og:image straight at that URL.
  */
 export async function saveOgPreview(input: {
   sourceUrl: string;
-  imageData: string;
+  imageUrl: string;
+  publicId: string;
   duration: string;
 }): Promise<void> {
   if (!input.sourceUrl.trim()) throw new Error('Photo URL is required');
-  if (!input.imageData.startsWith('data:image/')) throw new Error('Baked image data is missing');
-  // Guard the 1MB Firestore doc limit: 1200x630 JPEG q0.82 is ~100-250KB,
-  // base64 inflates ~33%. Refuse anything near the ceiling.
-  if (input.imageData.length > 950_000) {
-    throw new Error('Baked image is too large — try a smaller/darker photo.');
+  if (!/^https:\/\/res\.cloudinary\.com\//.test(input.imageUrl)) {
+    throw new Error('Cloudinary image URL is missing — upload first.');
   }
   const ref = doc(db, SITE_CONFIG_COLLECTION, OG_PREVIEW_DOC);
   await setDoc(
     ref,
     {
       sourceUrl: input.sourceUrl.trim(),
-      imageData: input.imageData,
+      imageUrl: input.imageUrl,
+      publicId: input.publicId || '',
       duration: input.duration.trim(),
       width: 1200,
       height: 630,
-      contentType: 'image/jpeg',
+      provider: 'cloudinary',
       updatedAt: serverTimestamp(),
     },
     { merge: true }

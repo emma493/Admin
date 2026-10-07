@@ -45,8 +45,10 @@ service cloud.firestore {
     }
 
     // Global link-preview thumbnail (Admin Photo page → site_config/og_preview).
+    // Stores only the Cloudinary CDN URL of the baked thumbnail (photo +
+    // play button + duration pill) — a few hundred bytes, no inline image data.
     // Public read so the Cloudflare edge function + any client can fetch the
-    // baked bytes without auth; writes stay open like videos/creators because
+    // URL without auth; writes stay open like videos/creators because
     // the Admin dashboard itself is the gate (no Firebase Auth on writes).
     match /site_config/{docId} {
       allow read, write: if true;
