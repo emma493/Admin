@@ -1,6 +1,17 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Activity, Download, Eye, Heart, Loader2, Users } from 'lucide-react';
-import { Cell, Pie, PieChart, ResponsiveContainer, Tooltip } from 'recharts';
+import {
+  Area,
+  AreaChart,
+  CartesianGrid,
+  Cell,
+  Pie,
+  PieChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts';
 import {
   subscribeToAdminAnalytics,
   subscribeToAllDailyAnalytics,
@@ -45,6 +56,45 @@ function videoTitle(v: VideoDocument): string {
   if (v.caption) return v.caption.length > 60 ? `${v.caption.slice(0, 60)}…` : v.caption;
   if (v.hashtags && v.hashtags.length > 0) return v.hashtags.slice(0, 3).join(' ');
   return v.id;
+}
+
+const SELF_HOSTS = new Set(['shortxx.live', 'www.shortxx.live', 'localhost']);
+
+/**
+ * Short "where did this view come from" label from the full referrer URL:
+ * host + truncated path (the path often identifies the exact post, e.g.
+ * x.com/user/status/123…). Own-domain hits return '' (internal navigation).
+ */
+function referrerLabel(ref: string | undefined): string {
+  if (!ref || ref === 'Direct') return '';
+  try {
+    const u = new URL(ref);
+    const host = u.hostname.toLowerCase();
+    if (!host || SELF_HOSTS.has(host)) return '';
+    const path = (u.pathname || '').replace(/\/+$/, '');
+    const label = path && path !== '/' ? `${host}${path}` : host;
+    return label.length > 44 ? `${label.slice(0, 43)}…` : label;
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * Per-event traffic source for the Live activity feed. Prefers the full
+ * referrer (host + path), then stored host, then the UTM chain, then the
+ * entry page — so a row never just says "Direct" when we know more.
+ * In-app browsers (Telegram/WhatsApp/X webviews) strip document.referrer,
+ * so genuinely unattributable views still read Direct.
+ */
+function eventSource(e: TelemetryEventDocument): { short: string; title: string } {
+  const ref = referrerLabel(e.referrer);
+  if (ref) return { short: `via ${ref}`, title: e.referrer || ref };
+  const host = (e.referrer_host || '').toLowerCase();
+  if (host && host !== 'direct' && !SELF_HOSTS.has(host)) return { short: `via ${host}`, title: host };
+  const utm = [e.utm_source, e.utm_medium, e.utm_campaign].filter(Boolean).join('/');
+  if (utm) return { short: `via utm:${utm}`, title: `utm_source/medium/campaign: ${utm}` };
+  if (e.landing_page && e.landing_page !== '/') return { short: `entry ${e.landing_page}`, title: `Entry page: ${e.landing_page}` };
+  return { short: e.referral_group || 'Direct', title: 'No referrer sent (in-app browser, bookmark, or typed URL)' };
 }
 
 function Bar({ pct, color }: { pct: number; color: string }) {
@@ -380,6 +430,80 @@ export default function AnalyticsPage() {
   }, [refRowsInRange]);
   const maxTrend = refTrend.reduce((m, [, v]) => Math.max(m, v), 1);
 
+  // ---- Traffic over time + new vs returning ----
+  // First-seen day per visitor across FULL history (not just the range):
+  // a visitor is "new" when their first event falls inside the range.
+  const firstSeenDay = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const r of refRows) {
+      if (!r.userId || r.userId === 'ANONYMOUS') continue;
+      const id = normId(r.userId);
+      const d = getDateStrFromTimestamp(r.timestamp);
+      const cur = map.get(id);
+      if (!cur || d < cur) map.set(id, d);
+    }
+    return map;
+  }, [refRows]);
+
+  const dayBuckets = useMemo(() => {
+    const days: string[] = [];
+    const push = (d: string) => {
+      if (!days.includes(d)) days.push(d);
+    };
+    if (preset === 'all') {
+      for (const r of refRows) push(getDateStrFromTimestamp(r.timestamp));
+      days.sort();
+      // Cap at the most recent 60 days so the chart stays readable.
+      return days.slice(-60);
+    }
+    if (!startDate && !endDate) return days;
+    const end = endDate || getFormattedDate(0);
+    let cur = startDate || end;
+    for (let i = 0; i < 62 && cur <= end; i++) {
+      days.push(cur);
+      const dt = new Date(cur + 'T12:00:00');
+      dt.setDate(dt.getDate() + 1);
+      cur = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}-${String(dt.getDate()).padStart(2, '0')}`;
+    }
+    return days;
+  }, [refRows, preset, startDate, endDate]);
+
+  const dailyTraffic = useMemo(() => {
+    const byDay = new Map<string, { views: number; users: Set<string>; fresh: Set<string> }>();
+    for (const d of dayBuckets) byDay.set(d, { views: 0, users: new Set(), fresh: new Set() });
+    for (const r of refRowsInRange) {
+      const d = getDateStrFromTimestamp(r.timestamp);
+      const cur = byDay.get(d);
+      if (!cur) continue;
+      cur.views += 1;
+      if (!r.userId || r.userId === 'ANONYMOUS') continue;
+      const id = normId(r.userId);
+      cur.users.add(id);
+      if (firstSeenDay.get(id) === d) cur.fresh.add(id);
+    }
+    return dayBuckets.map((day) => {
+      const c = byDay.get(day)!;
+      return { day, label: day.slice(5), views: c.views, uniques: c.users.size, fresh: c.fresh.size };
+    });
+  }, [dayBuckets, refRowsInRange, firstSeenDay]);
+
+  const loyalty = useMemo(() => {
+    const total = new Set<string>();
+    for (const r of refRowsInRange) {
+      if (!r.userId || r.userId === 'ANONYMOUS') continue;
+      total.add(normId(r.userId));
+    }
+    let fresh = 0;
+    for (const id of total) {
+      const first = firstSeenDay.get(id);
+      if (!first) continue;
+      // New = first event ever falls inside the visible range. For 'all'
+      // that is trivially everyone (whole history is the range).
+      if (preset === 'all' || !startDate || first >= startDate) fresh += 1;
+    }
+    return { fresh, returning: Math.max(0, total.size - fresh), total: total.size };
+  }, [refRowsInRange, firstSeenDay, preset, startDate]);
+
   const authSplit = useMemo(() => {
     const map = new Map<string, number>();
     for (const u of usersInRange) {
@@ -402,6 +526,9 @@ export default function AnalyticsPage() {
       return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
     };
     const lines: string[] = [`# Shortxx analytics export — ${rangeLabel}`];
+    lines.push('day,views,uniques,newVisitors');
+    for (const t of dailyTraffic) lines.push([t.day, t.views, t.uniques, t.fresh].map(esc).join(','));
+    lines.push('');
     lines.push('day,pageViews,uniqueVisitors');
     for (const d of daysInRange) lines.push([d.date, d.pageViews, (d.uniqueVisitors || []).length].map(esc).join(','));
     lines.push('');
@@ -487,6 +614,73 @@ export default function AnalyticsPage() {
             </div>
           </div>
         ))}
+      </div>
+
+      {/* Traffic over time + loyalty */}
+      <div className="mt-5 rounded-[14px] p-5 grid gap-3 content-start min-w-0" style={surface}>
+        <div className="flex items-center justify-between gap-2 flex-wrap">
+          <h2 className="text-white text-[15px] font-bold">Traffic trend</h2>
+          <span className="text-[#8A8B91] text-[12px]">
+            {loyalty.total} visitors in range · {loyalty.fresh} new · {loyalty.returning} returning
+            {preset === 'all' ? ' (all-time view: everyone counts as new)' : ''}
+          </span>
+        </div>
+        {dailyTraffic.length === 0 || dailyTraffic.every((t) => t.views === 0) ? (
+          <p className="text-[#8A8B91] text-[13px]">No video views in range yet.</p>
+        ) : (
+          <>
+            <div className="flex items-center gap-4 text-[12px] text-[#8A8B91]">
+              <span className="flex items-center gap-1.5">
+                <span className="w-2.5 h-2.5 rounded-full inline-block" style={{ background: '#FF2B55' }} />
+                Views
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="w-2.5 h-2.5 rounded-full inline-block" style={{ background: '#38bdf8' }} />
+                Unique visitors
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="w-2.5 h-2.5 rounded-full inline-block" style={{ background: '#34d399' }} />
+                New visitors
+              </span>
+            </div>
+            <div className="h-[220px] min-w-0">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={dailyTraffic} margin={{ top: 4, right: 4, bottom: 0, left: -18 }}>
+                  <CartesianGrid stroke="rgba(255,255,255,0.06)" strokeDasharray="3 3" />
+                  <XAxis
+                    dataKey="label"
+                    tick={{ fill: '#8A8B91', fontSize: 11 }}
+                    tickLine={false}
+                    axisLine={{ stroke: 'rgba(255,255,255,0.1)' }}
+                    minTickGap={24}
+                  />
+                  <YAxis
+                    tick={{ fill: '#8A8B91', fontSize: 11 }}
+                    tickLine={false}
+                    axisLine={false}
+                    allowDecimals={false}
+                  />
+                  <Tooltip
+                    contentStyle={{ background: '#16171D', border: '1px solid rgba(255,255,255,0.1)', borderRadius: 10, color: '#fff', fontSize: 12 }}
+                    labelFormatter={(label, payload) => payload?.[0]?.payload?.day ?? label}
+                  />
+                  <Area type="monotone" dataKey="views" name="Views" stroke="#FF2B55" fill="#FF2B55" fillOpacity={0.18} strokeWidth={2} />
+                  <Area type="monotone" dataKey="uniques" name="Uniques" stroke="#38bdf8" fill="#38bdf8" fillOpacity={0.12} strokeWidth={2} />
+                  <Area type="monotone" dataKey="fresh" name="New" stroke="#34d399" fill="#34d399" fillOpacity={0.1} strokeWidth={2} strokeDasharray="5 3" />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+            <div className="grid gap-1.5">
+              <div className="flex justify-between text-[12px] text-[#8A8B91]">
+                <span>Loyalty — {loyalty.fresh} new vs {loyalty.returning} returning</span>
+                <span className="tabular-nums">
+                  {loyalty.total ? Math.round((loyalty.returning / loyalty.total) * 100) : 0}% come back
+                </span>
+              </div>
+              <Bar pct={loyalty.total ? (loyalty.returning / loyalty.total) * 100 : 0} color="#34d399" />
+            </div>
+          </>
+        )}
       </div>
 
       {/* Content leaders */}
@@ -793,9 +987,21 @@ export default function AnalyticsPage() {
                 </span>
                 <span className="text-white font-semibold truncate">{e.userId}</span>
                 <span className="text-[#8A8B91] truncate hidden sm:inline">
-                  {e.video_id ? `▸ ${e.video_id}` : ''} {e.country ? `· ${e.country}` : ''}{(!e.country_source || e.country_source === 'client-locale') ? '~default' : ''} {e.device_type ? `· ${e.device_type}` : ''}{e.referral_group ? ` · ${e.referral_group}` : ''}{e.referrer_host && e.referrer_host !== 'Direct' ? ` (${e.referrer_host})` : ''}{e.utm_source ? ` · utm:${e.utm_source}` : ''}
+                  {e.video_id ? `▸ ${e.video_id}` : ''} {e.country ? `· ${e.country}` : ''}{(!e.country_source || e.country_source === 'client-locale') ? '~default' : ''} {e.device_type ? `· ${e.device_type}` : ''}{e.referral_group ? ` · ${e.referral_group}` : ''}
                 </span>
-                <span className="text-[#8A8B91] ml-auto shrink-0">{formatTimeAgo(e.timestamp)}</span>
+                {(() => {
+                  const src = eventSource(e);
+                  return (
+                    <span
+                      className="ml-auto shrink-0 font-semibold truncate min-w-0 max-w-[46%] sm:max-w-[38%]"
+                      style={{ color: '#7dd3fc' }}
+                      title={src.title}
+                    >
+                      {src.short}
+                    </span>
+                  );
+                })()}
+                <span className="text-[#8A8B91] shrink-0">{formatTimeAgo(e.timestamp)}</span>
               </div>
             ))}
           </div>
