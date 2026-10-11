@@ -58,7 +58,7 @@ per-invocation compute + Storage, no separate video-CDN line item.
 ## Operational notes
 
 - **Default Firestore database**: this project's Firestore data lives in
-  `(default)` on `shortxx-live` (`DATABASE_ID` in `src/transcodeVideo.js`).
+  `(default)` on `shortxx-app` (`DATABASE_ID` in `src/transcodeVideo.js`).
   If you ever migrate to a named database, update that one constant (plus
   the trigger registration, which targets it explicitly).
 - **Storage bucket**: also pinned explicitly (`STORAGE_BUCKET`) to the

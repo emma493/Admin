@@ -34,10 +34,10 @@ const { runHlsTranscode, generatePoster } = require('./transcode');
 const { uploadDirectory, publicDownloadUrl } = require('./upload');
 
 // This project uses the default Firestore database "(default)" and the
-// shortxx-live Storage bucket. `DATABASE_ID` stays explicit so a future
+// shortxx-app Storage bucket. `DATABASE_ID` stays explicit so a future
 // migration to a named database only touches this one constant.
 const DATABASE_ID = '(default)';
-const STORAGE_BUCKET = 'shortxx-live.firebasestorage.app';
+const STORAGE_BUCKET = 'shortxx-app.firebasestorage.app';
 
 const MAX_DOWNLOAD_BYTES = 200 * 1024 * 1024; // 200MB - generous for a 10-30s clip
 const DOWNLOAD_TIMEOUT_MS = 120_000;

@@ -41,7 +41,7 @@ setLogLevel('silent');
 const app = initializeApp(firebaseConfig);
 export { app };
 
-// Default Firestore database instance (project: shortxx-live)
+// Default Firestore database instance (project: shortxx-app)
 export const db = getFirestore(app);
 
 // Collection References

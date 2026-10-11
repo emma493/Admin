@@ -21,7 +21,7 @@ service cloud.firestore {
     }
 
     // Validation schemas — match the REAL Session A/B contract
-    // (shortxx-live default DB). Kept as documentation helpers; the open
+    // (shortxx-app default DB). Kept as documentation helpers; the open
     // match rules below stay permissive because the public static site
     // (no auth) must read videos + write views/likes/events directly.
     function isValidVideo(data) {

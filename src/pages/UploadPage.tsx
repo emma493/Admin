@@ -9,6 +9,23 @@ import type { CreatorDocument, VideoCategory, VideoDocument } from '../types';
 
 const surface = { background: '#1E1F27', border: '1px solid rgba(255,255,255,0.08)' };
 
+// Turns a Firestore/network throw into a one-line human reason so a failed
+// batch tells the owner WHY instead of just counting dead links.
+function friendlyReason(e: unknown): string {
+  const code = (e as { code?: string })?.code || '';
+  const msg = e instanceof Error ? e.message : String(e);
+  if (code === 'permission-denied' || /permission|PERMISSION_DENIED/i.test(msg)) {
+    return 'Write blocked by Firestore rules (publish firestore.rules)';
+  }
+  if (code === 'unauthenticated' || /auth|api-key|API_KEY/i.test(msg)) {
+    return 'Not authorized — bad or dead API key in firebase-applet-config.json';
+  }
+  if (code === 'unavailable' || /network|offline|Failed to fetch|Failed to get/i.test(msg)) {
+    return 'Network error — check connection and retry';
+  }
+  return msg.slice(0, 160);
+}
+
 const CreatorPick = memo(function CreatorPick({
   c,
   badge,
@@ -80,7 +97,7 @@ export default function UploadPage() {
   const [busy, setBusy] = useState(false);
   const [done, setDone] = useState(0);
   const [total, setTotal] = useState(0);
-  const [failed, setFailed] = useState<string[]>([]);
+  const [failed, setFailed] = useState<{ url: string; reason: string }[]>([]);
   const [finished, setFinished] = useState(false);
 
   useEffect(
@@ -174,7 +191,7 @@ export default function UploadPage() {
 
     let cursor = 0;
     let completed = 0;
-    const errs: string[] = [];
+    const errs: { url: string; reason: string }[] = [];
     const workers = Array(Math.min(5, jobs.length))
       .fill(0)
       .map(async () => {
@@ -182,8 +199,8 @@ export default function UploadPage() {
           const job = jobs[cursor++];
           try {
             await saveVideoDoc(job);
-          } catch {
-            errs.push(job.direct_url);
+          } catch (e) {
+            errs.push({ url: job.direct_url, reason: friendlyReason(e) });
           }
           completed++;
           setDone(completed);
@@ -286,6 +303,19 @@ export default function UploadPage() {
               <div className="mt-1.5 text-[12px] text-[#8A8B91]">
                 {done}/{total} posted{finished && (failed.length === 0 ? ' — all live' : ` — ${failed.length} failed`)}
               </div>
+            </div>
+          )}
+
+          {finished && failed.length > 0 && (
+            <div className="mt-3 grid gap-1.5">
+              {failed.slice(0, 5).map((f) => (
+                <p key={f.url} className="text-[12px] text-[#FF2B55] truncate" title={f.url}>
+                  {f.reason} — <span className="font-mono opacity-80">{f.url}</span>
+                </p>
+              ))}
+              {failed.length > 5 && (
+                <p className="text-[12px] text-[#8A8B91]">+{failed.length - 5} more failed with the same batch</p>
+              )}
             </div>
           )}
 

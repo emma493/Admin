@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
 import { zodResolver } from '@hookform/resolvers/zod';
@@ -155,17 +155,24 @@ export default function CreatorsPage() {
 
   // Scraped handle ideas: short + not already in Firestore (unique).
   // UNVERIFIED — owner must confirm each is an adult woman before creating.
-  const takenNames = new Set(creators.map((c) => c.username.toLowerCase()));
-  const suggPool = (SUGGESTED_USERNAMES as string[]).filter(
-    (n) => !takenNames.has(n.toLowerCase())
+  // Memoized so typing in the form (avatar URL watch) doesn't recompute
+  // + re-render the grid on every keystroke.
+  const takenNames = useMemo(
+    () => new Set(creators.map((c) => c.username.toLowerCase())),
+    [creators]
   );
-  const suggStart = suggPool.length ? (suggSeed * 6) % suggPool.length : 0;
-  const suggestions = suggPool.length
-    ? Array.from(
-        { length: Math.min(6, suggPool.length) },
-        (_, i) => suggPool[(suggStart + i) % suggPool.length]
-      )
-    : [];
+  const suggPool = useMemo(
+    () => (SUGGESTED_USERNAMES as string[]).filter((n) => !takenNames.has(n.toLowerCase())),
+    [takenNames]
+  );
+  const suggestions = useMemo(() => {
+    if (!suggPool.length) return [];
+    const start = (suggSeed * 6) % suggPool.length;
+    return Array.from(
+      { length: Math.min(6, suggPool.length) },
+      (_, i) => suggPool[(start + i) % suggPool.length]
+    );
+  }, [suggPool, suggSeed]);
 
   useEffect(() => {
     const unsubs = [
@@ -202,45 +209,66 @@ export default function CreatorsPage() {
       setPreview(obj);
       return () => URL.revokeObjectURL(obj);
     }
-    setPreview(urlValue.trim());
+    // Debounced: typing/pasting an image URL no longer fires a network
+    // fetch (and broken-image flash) on every single keystroke.
+    const t = setTimeout(() => setPreview(urlValue.trim()), 300);
+    return () => clearTimeout(t);
   }, [file, urlValue]);
 
   const onSubmit = async (values: FormValues) => {
     setSaving(true);
     setError('');
+    const username = values.username;
+    const avatarUrl = values.avatarUrl?.trim() || '';
+    const group = category || undefined;
+    const pendingFile = file;
+    const wasEdit = !!editingId;
     try {
+      // One fast write gates the form. A picked picture (potentially
+      // megabytes) uploads in the background AFTER the form closes, so
+      // adding a creator feels instant — it appears via live snapshot.
       const id = await saveCreatorDoc({
         id: editingId ?? undefined,
-        username: values.username,
-        avatarUrl: values.avatarUrl?.trim() || '',
-        category: category || undefined,
+        username,
+        avatarUrl,
+        category: group,
       });
-      if (file) {
-        const downloadUrl = await uploadCreatorAvatar(file, id);
-        await saveCreatorDoc({ id, username: values.username, avatarUrl: downloadUrl, category: category || undefined });
-      }
       reset();
       setFile(null);
       setCategory('girls');
       setShowForm(false);
       setEditingId(null);
+      setSaving(false);
+      if (pendingFile) {
+        try {
+          const downloadUrl = await uploadCreatorAvatar(pendingFile, id);
+          await saveCreatorDoc({ id, username, avatarUrl: downloadUrl, category: group });
+        } catch (e) {
+          setError(
+            (wasEdit ? 'Changes saved, but picture upload failed: ' : 'Creator saved, but picture upload failed: ') +
+              friendlySaveError(e)
+          );
+        }
+      }
     } catch (e) {
       setError(friendlySaveError(e));
-    } finally {
       setSaving(false);
     }
   };
 
-  const startEdit = (c: CreatorDocument) => {
-    setEditingId(c.id);
-    setFile(null);
-    setError('');
-    setCategory(c.category === 'couples' ? 'couples' : c.category === 'girls' ? 'girls' : '');
-    setValue('username', c.username, { shouldValidate: true });
-    setValue('avatarUrl', c.avatarUrl ?? '', { shouldValidate: true });
-    setPreview(c.avatarUrl ?? '');
-    setShowForm(true);
-  };
+  const startEdit = useCallback(
+    (c: CreatorDocument) => {
+      setEditingId(c.id);
+      setFile(null);
+      setError('');
+      setCategory(c.category === 'couples' ? 'couples' : c.category === 'girls' ? 'girls' : '');
+      setValue('username', c.username, { shouldValidate: true });
+      setValue('avatarUrl', c.avatarUrl ?? '', { shouldValidate: true });
+      setPreview(c.avatarUrl ?? '');
+      setShowForm(true);
+    },
+    [setValue]
+  );
 
   const closeForm = () => {
     setShowForm(false);
@@ -296,21 +324,26 @@ export default function CreatorsPage() {
 
   // Delete with confirm + cascade: linked videos are unlinked (kept playable)
   // so no video ever dangles on a missing creator doc.
-  const onDelete = async (c: CreatorDocument) => {    const linked = videos.filter((v) => v.creatorId === c.id);
-    const msg =
-      linked.length > 0
-        ? `Delete @${c.username}? Their ${linked.length} video${linked.length === 1 ? '' : 's'} will become Unlinked (kept, still playable).`
-        : `Delete @${c.username}?`;
-    if (!window.confirm(msg)) return;
-    try {
-      for (const v of linked) {
-        await updateVideoCreator(v.id, null);
+  // Stable ref (useCallback) so memoized cards don't re-render on every keystroke.
+  const onDelete = useCallback(
+    async (c: CreatorDocument) => {
+      const linked = videos.filter((v) => v.creatorId === c.id);
+      const msg =
+        linked.length > 0
+          ? `Delete @${c.username}? Their ${linked.length} video${linked.length === 1 ? '' : 's'} will become Unlinked (kept, still playable).`
+          : `Delete @${c.username}?`;
+      if (!window.confirm(msg)) return;
+      try {
+        for (const v of linked) {
+          await updateVideoCreator(v.id, null);
+        }
+        await deleteCreatorDoc(c.id);
+      } catch (e) {
+        setError(friendlySaveError(e));
       }
-      await deleteCreatorDoc(c.id);
-    } catch (e) {
-      setError(friendlySaveError(e));
-    }
-  };
+    },
+    [videos]
+  );
 
   return (
     <div>

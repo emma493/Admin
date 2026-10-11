@@ -1,7 +1,7 @@
 # Shortxx Admin
 
 Internal dashboard for managing the `shortxx.live` short-video feed.
-React 19 + Vite 6 + Tailwind 4 + Firebase (project `shortxx-live`).
+React 19 + Vite 6 + Tailwind 4 + Firebase (project `shortxx-app`).
 
 ## What it does
 
@@ -39,7 +39,7 @@ firebase deploy --only functions,firestore:rules,storage
 
 ## Data contract (shared with the public site — do not break unilaterally)
 
-Firestore default DB on `shortxx-live`, collection `videos`:
+Firestore default DB on `shortxx-app`, collection `videos`:
 
 ```
 direct_url / hls_url / poster_url / is_active / status / views / likes
