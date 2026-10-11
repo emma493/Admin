@@ -16,7 +16,7 @@
 
 import { Suspense, lazy } from 'react';
 import { BrowserRouter, NavLink, Route, Routes } from 'react-router-dom';
-import { LayoutDashboard, UploadCloud, Users, Clapperboard, UserRound, ChartNoAxesColumn, Image as ImageIcon } from 'lucide-react';
+import { LayoutDashboard, UploadCloud, Users, Clapperboard, UserRound, ChartNoAxesColumn } from 'lucide-react';
 import { db } from './lib/firebase';
 import Sidebar from './components/Sidebar';
 
@@ -25,7 +25,6 @@ const DashboardPage = lazy(() => import('./pages/DashboardPage'));
 const CreatorsPage = lazy(() => import('./pages/CreatorsPage'));
 const VideosPage = lazy(() => import('./pages/VideosPage'));
 const UploadPage = lazy(() => import('./pages/UploadPage'));
-const PhotoPage = lazy(() => import('./pages/PhotoPage'));
 const UsersPage = lazy(() => import('./pages/UsersPage'));
 const AnalyticsPage = lazy(() => import('./pages/AnalyticsPage'));
 
@@ -80,14 +79,6 @@ export default function App() {
               <UploadCloud size={15} /> Upload
             </NavLink>
             <NavLink
-              to="/photo"
-              className={({ isActive }) =>
-                `flex items-center gap-1.5 px-3 py-2 rounded-[8px] text-[13px] font-bold no-underline ${isActive ? 'text-white bg-[#FF2B55]/[0.14]' : 'text-[#A1A2A7]'}`
-              }
-            >
-              <ImageIcon size={15} /> Photo
-            </NavLink>
-            <NavLink
               to="/users"
               className={({ isActive }) =>
                 `flex items-center gap-1.5 px-3 py-2 rounded-[8px] text-[13px] font-bold no-underline ${isActive ? 'text-white bg-[#FF2B55]/[0.14]' : 'text-[#A1A2A7]'}`
@@ -111,7 +102,6 @@ export default function App() {
                 <Route path="/creators" element={<CreatorsPage />} />
                 <Route path="/videos" element={<VideosPage />} />
                 <Route path="/upload" element={<UploadPage />} />
-                <Route path="/photo" element={<PhotoPage />} />
                 <Route path="/users" element={<UsersPage />} />
                 <Route path="/analytics" element={<AnalyticsPage />} />
               </Routes>

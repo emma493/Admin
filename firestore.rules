@@ -54,6 +54,17 @@ service cloud.firestore {
       allow read, write: if true;
     }
 
+    // Per-photo short-links (Admin Photo page → photo_links/epN).
+    // Append-only by design: reads + creates + counter/click updates are
+    // open (Admin has no Auth, edge counts human hits), deletes are denied
+    // so old shares never break.
+    match /photo_links/{slug} {
+      allow read: if true;
+      allow create: if true;
+      allow update: if true;
+      allow delete: if false;
+    }
+
     match /creators/{creatorId} {
       allow read, write: if true;
     }

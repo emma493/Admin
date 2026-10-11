@@ -4,6 +4,10 @@ import { db, handleFirestoreError, OperationType } from './firebase';
 export const SITE_CONFIG_COLLECTION = 'site_config';
 export const OG_PREVIEW_DOC = 'og_preview';
 
+// NOTE: per-photo short-links (photo_links/epN) moved to the standalone
+// Og site (separate `og-tag` Firebase project). This module keeps only the
+// global homepage preview (site_config/og_preview) used by shortxx.live/.
+
 export interface OgPreviewData {
   /** Original photo URL pasted in Admin (bake source only, never hotlinked publicly). */
   sourceUrl: string;
