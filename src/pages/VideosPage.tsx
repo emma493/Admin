@@ -1,11 +1,18 @@
-import { memo, useEffect, useMemo, useState } from 'react';
-import { Clapperboard, Eye, Heart, Loader2, Search, Trash2, Tags } from 'lucide-react';
+import { memo, useEffect, useMemo, useRef, useState } from 'react';
+import { Clapperboard, Eye, Heart, Loader2, Search, Trash2, Tags, Copy } from 'lucide-react';
 import {
   subscribeToVideos,
   deleteVideoDoc,
   toggleVideoStatus,
   updateVideoCategory,
 } from '../lib/firebase';
+import {
+  normalizeVideoUrl,
+  urlPathKey,
+  groupDuplicates,
+  pickSurvivor,
+  mergeDuplicateVictim,
+} from '../lib/dedup';
 import { subscribeToCreators } from '../lib/creators';
 import type { CreatorDocument, VideoCategory, VideoDocument } from '../types';
 import Dropdown from '../components/Dropdown';
@@ -135,6 +142,12 @@ export default function VideosPage() {
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const [labelBusy, setLabelBusy] = useState(false);
   const [labelDone, setLabelDone] = useState<string | null>(null);
+  // Silent duplicate sweep: report of the last background merge + count of
+  // near-duplicates (same file path, different query — counted only).
+  const [dupeReport, setDupeReport] = useState<string | null>(null);
+  const [nearDupeCount, setNearDupeCount] = useState(0);
+  const processedVictims = useRef<Set<string>>(new Set());
+  const sweepingRef = useRef(false);
 
   useEffect(() => {
     const unsubs = [
@@ -262,6 +275,61 @@ export default function VideosPage() {
     }
   };
 
+  // Silent duplicate sweep: exact-URL groups auto-merge in the background —
+  // oldest doc survives, victims' views/likes fold into it, victims deleted.
+  // No confirms, no previews; the banner below only reports what happened.
+  // Skipped while the owner is acting on rows so it never fights manual taps.
+  useEffect(() => {
+    if (sweepingRef.current || busyId || assignId || labelBusy) return;
+    const pending: { survivorId: string; victim: (typeof videos)[number] }[] = [];
+    for (const group of groupDuplicates(videos).values()) {
+      if (group.length < 2) continue;
+      const { survivor, victims } = pickSurvivor(group);
+      for (const v of victims) {
+        if (!processedVictims.current.has(v.id)) pending.push({ survivorId: survivor.id, victim: v });
+      }
+      if (pending.length >= 25) break;
+    }
+    // Passive near-duplicate count: same file path, different query string.
+    // Counted only — auto-merging those could fuse distinct signed URLs.
+    const byPath = new Map<string, Set<string>>();
+    for (const v of videos) {
+      const full = normalizeVideoUrl(v.direct_url);
+      const key = urlPathKey(v.direct_url);
+      if (!full || !key) continue;
+      const set = byPath.get(key);
+      if (set) set.add(full);
+      else byPath.set(key, new Set([full]));
+    }
+    let near = 0;
+    for (const set of byPath.values()) if (set.size > 1) near += set.size - 1;
+    setNearDupeCount(near);
+    if (pending.length === 0) return;
+    sweepingRef.current = true;
+    (async () => {
+      let removed = 0;
+      let views = 0;
+      let likes = 0;
+      for (const { survivorId, victim } of pending.slice(0, 25)) {
+        try {
+          const m = await mergeDuplicateVictim(survivorId, victim);
+          processedVictims.current.add(victim.id);
+          removed += 1;
+          views += m.views;
+          likes += m.likes;
+        } catch {
+          // Stays unprocessed for the next sweep.
+        }
+      }
+      sweepingRef.current = false;
+      if (removed > 0) {
+        setDupeReport(
+          `Removed ${removed} duplicate${removed === 1 ? '' : 's'} · merged ${views.toLocaleString()} views, ${likes.toLocaleString()} likes into the originals.`
+        );
+      }
+    })();
+  }, [videos, busyId, assignId, labelBusy]);
+
   return (
     <div>
       <div className="flex items-center justify-between gap-3 flex-wrap">
@@ -343,6 +411,17 @@ export default function VideosPage() {
 
         {/* List */}
         <div className="grid gap-3 content-start min-w-0 max-w-full">
+          {(dupeReport || nearDupeCount > 0) && (
+            <div className="rounded-[14px] px-4 py-3 flex items-center gap-2 text-[13px]" style={surface}>
+              <Copy size={14} className="text-[#8A8B91] shrink-0" />
+              <span className="text-[#8A8B91]">
+                {dupeReport ?? 'No exact duplicates.'}
+                {nearDupeCount > 0 && (
+                  <> {nearDupeCount} similar link{nearDupeCount === 1 ? '' : 's'} (same file, different URL) left alone.</>
+                )}
+              </span>
+            </div>
+          )}
           {legacyVideos.length > 0 && (
             <div className="rounded-[14px] p-4 grid gap-2" style={surface}>
               <div className="flex items-center gap-2 text-white text-[14px] font-bold">

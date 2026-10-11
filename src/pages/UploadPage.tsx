@@ -4,6 +4,7 @@ import { saveVideoDoc, subscribeToVideos } from '../lib/firebase';
 import { subscribeToCreators, resolveCreatorBadge } from '../lib/creators';
 import type { CreatorBadge } from '../lib/creators';
 import { extractLinksFromString } from '../lib/videoUtils';
+import { normalizeVideoUrl } from '../lib/dedup';
 import { suggestFor } from '../lib/captionAI';
 import type { CreatorDocument, VideoCategory, VideoDocument } from '../types';
 
@@ -111,11 +112,23 @@ export default function UploadPage() {
 
   const links = useMemo(() => extractLinksFromString(raw), [raw]);
 
+  // Silent duplicate guard: links already in Firestore never enter the jobs
+  // queue — exact trimmed-URL match. Skipped ones are reported, not posted.
+  const existingUrls = useMemo(
+    () => new Set(videoList.map((v) => normalizeVideoUrl(v.direct_url))),
+    [videoList]
+  );
+  const freshLinks = useMemo(
+    () => links.filter((l) => !existingUrls.has(normalizeVideoUrl(l))),
+    [links, existingUrls]
+  );
+  const skippedDupes = links.length - freshLinks.length;
+
   const toggle = (id: string) =>
     setSelected((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
 
-  const perCreator = selected.length > 0 ? Math.ceil(links.length / selected.length) : 0;
-  const canSubmit = !busy && selected.length > 0 && links.length > 0;
+  const perCreator = selected.length > 0 ? Math.ceil(freshLinks.length / selected.length) : 0;
+  const canSubmit = !busy && selected.length > 0 && freshLinks.length > 0;
 
   // Per-creator labeled-video counts (same resolution as the Creators page:
   // explicit choice wins, otherwise video majority). Previously this passed
@@ -170,13 +183,13 @@ export default function UploadPage() {
     if (!canSubmit) return;
     setBusy(true);
     setDone(0);
-    setTotal(links.length);
+    setTotal(freshLinks.length);
     setFailed([]);
     setFinished(false);
 
     // Round-robin: link[i] → selected[i % n], so links spread evenly.
     // AI caption + hashtags rotate per link for SEO variety.
-    const jobs = links.map((direct_url, i) => {
+    const jobs = freshLinks.map((direct_url, i) => {
       const seo = suggestFor(category, i, 0);
       return {
         direct_url,
@@ -284,8 +297,13 @@ export default function UploadPage() {
           />
           <div className="mt-3 flex items-center gap-2 text-[13px] text-[#8A8B91]">
             <Link2 size={14} />
-            {links.length} link{links.length === 1 ? '' : 's'} detected
-            {links.length > 0 && selected.length > 0 && (
+            {freshLinks.length} link{freshLinks.length === 1 ? '' : 's'} detected
+            {skippedDupes > 0 && (
+              <span>
+                · {skippedDupes} duplicate{skippedDupes === 1 ? '' : 's'} skipped
+              </span>
+            )}
+            {freshLinks.length > 0 && selected.length > 0 && (
               <span>
                 → ~{perCreator} per creator ({category})
               </span>
@@ -326,10 +344,13 @@ export default function UploadPage() {
             style={{ background: '#FF2B55' }}
           >
             {busy ? <Loader2 size={15} className="animate-spin" /> : <UploadCloud size={16} />}
-            {busy ? `Posting ${done}/${total}…` : `Post ${links.length} video${links.length === 1 ? '' : 's'}`}
+            {busy ? `Posting ${done}/${total}…` : `Post ${freshLinks.length} video${freshLinks.length === 1 ? '' : 's'}`}
           </button>
-          {!busy && links.length > 0 && selected.length === 0 && (
+          {!busy && freshLinks.length > 0 && selected.length === 0 && (
             <p className="mt-2 text-[12px] text-[#FF2B55]">Select at least one creator first.</p>
+          )}
+          {!busy && links.length > 0 && freshLinks.length === 0 && (
+            <p className="mt-2 text-[12px] text-[#8A8B91]">All pasted links already exist — nothing to post.</p>
           )}
         </section>
       </div>
