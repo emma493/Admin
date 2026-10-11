@@ -14,14 +14,13 @@
  * app #0F1014 · sidebar #16171D · surface #1E1F27 · accent #FF2B55
  */
 
-import { Suspense, lazy, useState } from 'react';
+import { Suspense, lazy } from 'react';
 import { BrowserRouter, NavLink, Route, Routes } from 'react-router-dom';
-import { LayoutDashboard, LogOut, UploadCloud, Users, Clapperboard, UserRound, ChartNoAxesColumn, Image as ImageIcon } from 'lucide-react';
+import { LayoutDashboard, UploadCloud, Users, Clapperboard, UserRound, ChartNoAxesColumn, Image as ImageIcon } from 'lucide-react';
 import { db } from './lib/firebase';
-import { isAuthed, logout } from './lib/auth';
 import Sidebar from './components/Sidebar';
 
-// Lazy routes — app shell + login render without waiting on page bundles.
+// Lazy routes — app shell renders without waiting on page bundles.
 const DashboardPage = lazy(() => import('./pages/DashboardPage'));
 const CreatorsPage = lazy(() => import('./pages/CreatorsPage'));
 const VideosPage = lazy(() => import('./pages/VideosPage'));
@@ -29,7 +28,6 @@ const UploadPage = lazy(() => import('./pages/UploadPage'));
 const PhotoPage = lazy(() => import('./pages/PhotoPage'));
 const UsersPage = lazy(() => import('./pages/UsersPage'));
 const AnalyticsPage = lazy(() => import('./pages/AnalyticsPage'));
-const LoginPage = lazy(() => import('./pages/LoginPage'));
 
 function PageFallback() {
   return (
@@ -41,25 +39,10 @@ function PageFallback() {
 void db;
 
 export default function App() {
-  const [authed, setAuthed] = useState(() => isAuthed());
-
-  if (!authed) {
-    return (
-      <Suspense fallback={<div className="min-h-screen" style={{ background: '#0F1014' }} />}>
-        <LoginPage onAuthed={() => setAuthed(true)} />
-      </Suspense>
-    );
-  }
-
   return (
     <BrowserRouter>
       <div className="min-h-screen flex" style={{ background: '#0F1014' }}>
-        <Sidebar
-          onLogout={() => {
-            logout();
-            setAuthed(false);
-          }}
-        />
+        <Sidebar />
         <div className="flex-1 min-w-0">
           <div className="lg:hidden flex items-center gap-2 px-4 py-3 overflow-x-auto" style={{ background: '#16171D', borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
             <span className="text-white font-black mr-2 shrink-0">Shortxx</span>
@@ -120,16 +103,6 @@ export default function App() {
             >
               <ChartNoAxesColumn size={15} /> Analytics
             </NavLink>
-            <button
-              onClick={() => {
-                logout();
-                setAuthed(false);
-              }}
-              aria-label="Sign out"
-              className="ml-auto flex items-center gap-1.5 px-3 py-2 rounded-[8px] text-[13px] font-bold text-[#A1A2A7]"
-            >
-              <LogOut size={15} /> Sign out
-            </button>
           </div>
           <main className="p-4 sm:p-6 lg:p-8 max-w-6xl mx-auto w-full">
             <Suspense fallback={<PageFallback />}>

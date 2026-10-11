@@ -1,12 +1,12 @@
 import { NavLink } from 'react-router-dom';
-import { LayoutDashboard, LogOut, UploadCloud, Users, Clapperboard, UserRound, ChartNoAxesColumn, Image as ImageIcon } from 'lucide-react';
+import { LayoutDashboard, UploadCloud, Users, Clapperboard, UserRound, ChartNoAxesColumn, Image as ImageIcon } from 'lucide-react';
 
 const linkBase =
   'flex items-center gap-3 px-3.5 py-2.5 rounded-[10px] text-[14px] font-semibold transition-colors no-underline';
 const linkIdle = 'text-[#A1A2A7] hover:bg-white/[0.06] hover:text-white';
 const linkActive = 'bg-[#FF2B55]/[0.12] text-white';
 
-export default function Sidebar({ onLogout }: { onLogout: () => void }) {
+export default function Sidebar() {
   return (
     <aside
       className="w-[248px] shrink-0 min-h-screen flex flex-col px-4 py-5 max-lg:hidden"
@@ -67,18 +67,6 @@ export default function Sidebar({ onLogout }: { onLogout: () => void }) {
           Analytics
         </NavLink>
       </nav>
-      <div
-        className="mt-auto pt-4 grid gap-2"
-        style={{ borderTop: '1px solid rgba(255,255,255,0.08)' }}
-      >
-        <button
-          onClick={onLogout}
-          className={`${linkBase} ${linkIdle} w-full`}
-        >
-          <LogOut size={18} strokeWidth={2.2} />
-          Sign out
-        </button>
-      </div>
     </aside>
   );
 }
