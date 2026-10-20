@@ -229,10 +229,9 @@ export default function AnalyticsPage() {
   const maxCreatorViews = topCreators[0]?.views || 1;
 
   const categorySplit = useMemo(() => {
-    const counts = { girls: 0, couples: 0, legacy: 0 };
+    const counts = { girls: 0, legacy: 0 };
     for (const v of videos) {
       if (v.category === 'girls') counts.girls += 1;
-      else if (v.category === 'couples') counts.couples += 1;
       else counts.legacy += 1;
     }
     return counts;
@@ -242,19 +241,17 @@ export default function AnalyticsPage() {
   const groupViews = useMemo(() => {
     const acc = {
       girls: { views: 0, videos: 0, likes: 0 },
-      couples: { views: 0, videos: 0, likes: 0 },
       legacy: { views: 0, videos: 0, likes: 0 },
     };
     for (const v of videos) {
-      const t = v.category === 'girls' ? acc.girls : v.category === 'couples' ? acc.couples : acc.legacy;
+      const t = v.category === 'girls' ? acc.girls : acc.legacy;
       t.views += v.views || 0;
       t.likes += v.likes || 0;
       t.videos += 1;
     }
-    const total = acc.girls.views + acc.couples.views + acc.legacy.views || 1;
+    const total = acc.girls.views + acc.legacy.views || 1;
     const rows = [
       { label: 'Girls', color: '#FF2B55', ...acc.girls },
-      { label: 'Couples', color: '#a78bfa', ...acc.couples },
       { label: 'Legacy (unlabeled)', color: '#8A8B91', ...acc.legacy },
     ];
     return rows.map((r) => ({
@@ -703,7 +700,7 @@ export default function AnalyticsPage() {
             ))
           )}
           <div className="text-[#8A8B91] text-[12px] mt-1">
-            Categories — Girls {categorySplit.girls} · Couples {categorySplit.couples} · Legacy {categorySplit.legacy}
+            Categories — Girls {categorySplit.girls} · Legacy {categorySplit.legacy}
             {appStats ? ` · Lifetime installs ${appStats.totalAppInstalls}` : ''}
           </div>
         </div>
@@ -728,7 +725,7 @@ export default function AnalyticsPage() {
         </div>
       </div>
 
-      {/* Views by group — lifetime totals per Girls/Couples/Legacy */}
+      {/* Views by group — lifetime totals per Girls/Legacy */}
       <div className="mt-3 rounded-[14px] p-5 grid gap-3 content-start min-w-0" style={surface}>
         <div className="flex items-center justify-between gap-2 flex-wrap">
           <h2 className="text-white text-[15px] font-bold">Views by group</h2>

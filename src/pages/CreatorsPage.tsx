@@ -59,7 +59,6 @@ function friendlySaveError(e: unknown): string {
 // resolver with the Upload page). Creators with no data get no badge.
 const BADGE_STYLE: Record<Exclude<CreatorBadge, null>, { background: string; color: string }> = {
   Girls: { background: 'rgba(255,43,85,0.12)', color: '#ff8fa3' },
-  Couples: { background: 'rgba(168,85,247,0.15)', color: '#c4b5fd' },
 };
 
 // Memoized card — adding/deleting one creator no longer re-renders every card.
@@ -191,13 +190,12 @@ export default function CreatorsPage() {
   // Per-creator category counts from linked videos (videos carry creatorId).
   // Resolution (explicit > majority) happens at render via resolveCreatorBadge.
   const countsByCreator = useMemo(() => {
-    const counts = new Map<string, { girls: number; couples: number }>();
+    const counts = new Map<string, { girls: number }>();
     for (const v of videos) {
       if (!v.creatorId) continue;
-      if (v.category !== 'girls' && v.category !== 'couples') continue;
-      const cur = counts.get(v.creatorId) ?? { girls: 0, couples: 0 };
-      if (v.category === 'girls') cur.girls += 1;
-      else cur.couples += 1;
+      if (v.category !== 'girls') continue;
+      const cur = counts.get(v.creatorId) ?? { girls: 0 };
+      cur.girls += 1;
       counts.set(v.creatorId, cur);
     }
     return counts;
@@ -261,7 +259,7 @@ export default function CreatorsPage() {
       setEditingId(c.id);
       setFile(null);
       setError('');
-      setCategory(c.category === 'couples' ? 'couples' : c.category === 'girls' ? 'girls' : '');
+      setCategory(c.category === 'girls' ? 'girls' : '');
       setValue('username', c.username, { shouldValidate: true });
       setValue('avatarUrl', c.avatarUrl ?? '', { shouldValidate: true });
       setPreview(c.avatarUrl ?? '');
@@ -287,9 +285,9 @@ export default function CreatorsPage() {
       creators
         .map((c) => {
           if (c.category) return null;
-          const counts = countsByCreator.get(c.id) ?? { girls: 0, couples: 0 };
-          if (counts.girls === counts.couples) return null;
-          return { c, group: (counts.girls > counts.couples ? 'girls' : 'couples') as VideoCategory };
+          const counts = countsByCreator.get(c.id) ?? { girls: 0 };
+          if (counts.girls === 0) return null;
+          return { c, group: 'girls' as VideoCategory };
         })
         .filter((x): x is { c: CreatorDocument; group: VideoCategory } => !!x),
     [creators, countsByCreator]
@@ -300,10 +298,9 @@ export default function CreatorsPage() {
   const onAssignMajority = async () => {
     if (assigningGroups || ungroupedMajority.length === 0) return;
     const girls = ungroupedMajority.filter((x) => x.group === 'girls').length;
-    const couples = ungroupedMajority.length - girls;
     if (
       !window.confirm(
-        `Stamp explicit groups on ${ungroupedMajority.length} ungrouped creators (${girls} girls, ${couples} couples) from their videos' majority?`
+        `Stamp Girls on ${ungroupedMajority.length} ungrouped creators (${girls} girls) from their videos' majority?`
       )
     )
       return;
@@ -452,25 +449,20 @@ export default function CreatorsPage() {
             <div className="grid gap-1.5">
               <span className="text-[#E1E2E6] text-[13px] font-bold">Group</span>
               <div className="flex gap-2" role="radiogroup" aria-label="Creator group">
-                {(['girls', 'couples'] as VideoCategory[]).map((g) => (
-                  <button
-                    key={g}
-                    type="button"
-                    role="radio"
-                    aria-checked={category === g}
-                    onClick={() => setCategory(g)}
-                    className="px-4 py-2 rounded-[10px] text-[13px] font-bold capitalize transition-colors"
-                    style={
-                      category === g
-                        ? g === 'couples'
-                          ? { background: 'rgba(168,85,247,0.15)', color: '#c4b5fd', border: '1px solid rgba(168,85,247,0.5)' }
-                          : { background: 'rgba(255,43,85,0.12)', color: '#ff8fa3', border: '1px solid rgba(255,43,85,0.5)' }
-                        : { background: '#16171D', color: '#8A8B91', border: '1px solid rgba(255,255,255,0.1)' }
-                    }
-                  >
-                    {g}
-                  </button>
-                ))}
+                <button
+                  type="button"
+                  role="radio"
+                  aria-checked={category === 'girls'}
+                  onClick={() => setCategory('girls')}
+                  className="px-4 py-2 rounded-[10px] text-[13px] font-bold capitalize transition-colors"
+                  style={
+                    category === 'girls'
+                      ? { background: 'rgba(255,43,85,0.12)', color: '#ff8fa3', border: '1px solid rgba(255,43,85,0.5)' }
+                      : { background: '#16171D', color: '#8A8B91', border: '1px solid rgba(255,255,255,0.1)' }
+                  }
+                >
+                  Girls
+                </button>
                 <button
                   type="button"
                   role="radio"
@@ -520,12 +512,12 @@ export default function CreatorsPage() {
 
       <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
         {creators.map((c) => {
-          const counts = countsByCreator.get(c.id) ?? { girls: 0, couples: 0 };
+          const counts = countsByCreator.get(c.id) ?? { girls: 0 };
           return (
             <CreatorCard
               key={c.id}
               c={c}
-              badge={resolveCreatorBadge(c.category, counts.girls, counts.couples)}
+              badge={resolveCreatorBadge(c.category, counts.girls)}
               onEdit={startEdit}
               onDelete={onDelete}
             />

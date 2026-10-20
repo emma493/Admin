@@ -46,11 +46,10 @@ const VideoRow = memo(function VideoRow({
       <div className="flex items-center gap-2 flex-wrap">
         <span
           className="text-[11px] font-black uppercase tracking-[0.1em] px-2 py-0.5 rounded-full"
-          style={
-            v.category === 'couples'
-              ? { background: 'rgba(168,85,247,0.15)', color: '#c4b5fd' }
-              : { background: 'rgba(255,43,85,0.12)', color: '#ff8fa3' }
-          }
+          style={{
+            background: 'rgba(255,43,85,0.12)',
+            color: '#ff8fa3',
+          }}
         >
           {v.category ?? 'legacy'}
         </span>
@@ -94,7 +93,7 @@ const VideoRow = memo(function VideoRow({
           {v.is_active ? 'Hide' : 'Show'}
         </button>
         {!v.category &&
-          (['girls', 'couples'] as VideoCategory[]).map((g) => (
+          (['girls'] as VideoCategory[]).map((g) => (
             <button
               key={g}
               type="button"
@@ -180,17 +179,15 @@ export default function VideosPage() {
     const byCreator = new Map(creators.map((c) => [c.id, c.category]));
     return legacyVideos.filter((v) => {
       const g = v.creatorId ? byCreator.get(v.creatorId) : undefined;
-      return g === 'girls' || g === 'couples';
+      return g === 'girls';
     });
   }, [legacyVideos, creators]);
   const groupCounts = useMemo(() => {
     let girls = 0;
-    let couples = 0;
     for (const v of videos) {
       if (v.category === 'girls') girls += 1;
-      else if (v.category === 'couples') couples += 1;
     }
-    return { girls, couples, legacy: legacyVideos.length };
+    return { girls, legacy: legacyVideos.length };
   }, [videos, legacyVideos]);
 
   const counts = useMemo(() => {
@@ -239,7 +236,7 @@ export default function VideosPage() {
     let ok = 0;
     for (const v of autoLabelable) {
       const g = v.creatorId ? byCreator.get(v.creatorId) : undefined;
-      if (g !== 'girls' && g !== 'couples') continue;
+      if (g !== 'girls') continue;
       try {
         await updateVideoCategory(v.id, g);
         ok += 1;
@@ -303,7 +300,6 @@ export default function VideosPage() {
                 [
                   { value: 'all', label: 'All', count: videos.length },
                   { value: 'girls', label: 'Girls', count: groupCounts.girls },
-                  { value: 'couples', label: 'Couples', count: groupCounts.couples },
                   { value: 'legacy', label: 'Legacy', count: groupCounts.legacy },
                 ] as { value: CategoryFilter; label: string; count: number }[]
               ).map((g) => (

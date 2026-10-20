@@ -24,7 +24,7 @@ Usage:
     python tools/trend_crawler.py --resume                 # continue from checkpoint
     python tools/trend_crawler.py --no-sitemap --no-reddit # HTML only
 
-Output: tools/trend-corpus.crawled.json  {girls:[...], couples:[...]}
+Output: tools/trend-corpus.crawled.json  {girls:[...]}
         (same shape merge_corpus.py reads) + tools/trend-crawler.stats.json.
 Raw titles are keyword-mining input ONLY — never user-facing captions.
 """
@@ -122,8 +122,7 @@ def slug_to_tag(slug: str) -> str:
 
 
 def categorize(caption: str, tags: list) -> str:
-    blob = caption + " " + " ".join(tags)
-    return "couples" if COUPLE_WORDS.search(blob) else "girls"
+    return "girls"
 
 
 def weight_for(score: int) -> int:
@@ -591,7 +590,7 @@ def main() -> int:
         if i % 3 == 0:
             save_checkpoint(st)
 
-    # Dedup by caption, keep highest weight, split girls/couples
+    # Dedup by caption, keep highest weight
     best: dict = {}
     for r in st.results:
         key = r["caption"].lower()
@@ -599,17 +598,14 @@ def main() -> int:
             best[key] = r
     girls = [v for v in best.values()
              if categorize(v["caption"], v["hashtags"]) == "girls"]
-    couples = [v for v in best.values()
-               if categorize(v["caption"], v["hashtags"]) == "couples"]
     girls.sort(key=lambda r: -r["weight"])
-    couples.sort(key=lambda r: -r["weight"])
 
     out_path = Path(args.out)
-    if out_path.exists() and (girls or couples):
+    if out_path.exists() and girls:
         bak = out_path.with_suffix(".prev.json")
         bak.write_bytes(out_path.read_bytes())
         print(f"[save] previous output backed up -> {bak.name}", flush=True)
-    out_path.write_text(json.dumps({"girls": girls, "couples": couples},
+    out_path.write_text(json.dumps({"girls": girls},
                                    indent=2, ensure_ascii=False),
                         encoding="utf-8")
 
@@ -619,7 +615,6 @@ def main() -> int:
         "titles_raw": len(st.results),
         "titles_unique": len(best),
         "girls": len(girls),
-        "couples": len(couples),
         "hook_style": hook_hits,
         "domain_hits": dict(st.domain_hits),
         "domain_fails": {k: v for k, v in st.domain_fails.items() if v},
@@ -633,7 +628,7 @@ def main() -> int:
         pass
 
     print(f"[done] raw={len(st.results)} unique={len(best)} "
-          f"girls={len(girls)} couples={len(couples)} "
+          f"girls={len(girls)} "
           f"hook_style={hook_hits} -> {out_path.name}", flush=True)
     print(f"[done] stats -> {STATS_FILE.name}", flush=True)
     for err in st.errors[:25]:

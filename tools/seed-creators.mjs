@@ -1,10 +1,10 @@
-// tools/seed-creators.mjs — one-shot bulk create of the 30 starter
-// creators (15 girls + 15 couples) in Firestore `creators`.
+// tools/seed-creators.mjs — one-shot bulk create of the 15 starter
+// creators (all girls) in Firestore `creators`.
 //
 // Run from the Admin folder (needs network + the repo's firebase dep):
 //     cd Admin && node tools/seed-creators.mjs
 //
-// Idempotent: deterministic doc IDs (seed-girls-01…/seed-couples-15) with
+// Idempotent: deterministic doc IDs (seed-girls-01…seed-girls-15) with
 // merge:true, so re-running never duplicates — it just repairs fields.
 // Requires the open firestore.rules to be deployed (reads+writes: true).
 // When you later upload videos, link each video's creatorId to the doc ID
@@ -43,7 +43,7 @@ function explain(err) {
 let ok = 0;
 try {
   for (const s of seeds) {
-    if (!s.id || !s.username || (s.category !== 'girls' && s.category !== 'couples')) {
+    if (!s.id || !s.username || s.category !== 'girls') {
       console.warn('SKIP invalid entry:', JSON.stringify(s));
       continue;
     }

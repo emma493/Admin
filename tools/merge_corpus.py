@@ -54,11 +54,11 @@ def hook_ok(caption: str) -> bool:
 def main() -> None:
     crawled = json.loads(CRAWLED.read_text(encoding="utf-8"))
     corpus = json.loads(CORPUS.read_text(encoding="utf-8"))
-    have = {e["caption"].lower() for cat in ("girls", "couples") for e in corpus.get(cat, [])}
+    have = {e["caption"].lower() for cat in ("girls",) for e in corpus.get(cat, [])}
 
-    added = {"girls": 0, "couples": 0}
-    kw = {"girls": Counter(), "couples": Counter()}
-    for cat in ("girls", "couples"):
+    added = {"girls": 0}
+    kw = {"girls": Counter()}
+    for cat in ("girls",):
         for e in crawled.get(cat, []):
             cap = e["caption"]
             for w in re.findall(r"[a-z]{4,}", cap.lower()):
@@ -75,12 +75,11 @@ def main() -> None:
                 added[cat] += 1
 
     CORPUS.write_text(json.dumps(corpus, indent=2), encoding="utf-8")
-    print(f"[merge] added girls={added['girls']} couples={added['couples']}")
-    print(f"[merge] corpus now girls={len(corpus['girls'])} couples={len(corpus['couples'])}")
+    print(f"[merge] added girls={added['girls']}")
+    print(f"[merge] corpus now girls={len(corpus['girls'])}")
     print("[tags] top mined keywords -> candidate hashtag additions:")
-    for cat in ("girls", "couples"):
-        top = [w for w, _ in kw[cat].most_common(25)]
-        print(f"  {cat}: {', '.join('#' + w for w in top)}")
+    top = [w for w, _ in kw["girls"].most_common(25)]
+    print(f"  girls: {', '.join('#' + w for w in top)}")
 
 
 if __name__ == "__main__":

@@ -33,7 +33,7 @@ service cloud.firestore {
         && (!('views' in data) || (data.views is number && data.views >= 0))
         && (!('likes' in data) || (data.likes is number && data.likes >= 0))
         && (!('creatorId' in data) || (data.creatorId is string && data.creatorId.size() <= 128))
-        && (!('category' in data) || (data.category in ['girls', 'couples']))
+        && (!('category' in data) || (data.category in ['girls']))
         && (!('caption' in data) || (data.caption is string && data.caption.size() <= 300))
         && (!('hashtags' in data) || (data.hashtags is list))
         && (!('status' in data) || (data.status in ['processing', 'ready', 'failed']));

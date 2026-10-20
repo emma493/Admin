@@ -15,17 +15,12 @@ const storage = getStorage(app);
 /** Creator group badge shared by the Creators + Upload pages.
  * Explicit owner choice always wins; otherwise video-majority decides
  * (exact ties read as Girls); no data means no badge. */
-export type CreatorBadge = 'Girls' | 'Couples' | null;
+export type CreatorBadge = 'Girls' | null;
 
-export function resolveCreatorBadge(
-  explicit: 'girls' | 'couples' | undefined,
-  girls: number,
-  couples: number
-): CreatorBadge {
+export function resolveCreatorBadge(explicit: 'girls' | undefined, girls: number): CreatorBadge {
   if (explicit === 'girls') return 'Girls';
-  if (explicit === 'couples') return 'Couples';
-  if (girls === 0 && couples === 0) return null;
-  return girls >= couples ? 'Girls' : 'Couples';
+  if (girls === 0) return null;
+  return 'Girls';
 }
 
 export function subscribeToCreators(
@@ -43,7 +38,7 @@ export function subscribeToCreators(
           username: data.username || 'Unnamed',
           avatarUrl: data.avatarUrl || '',
           is_active: typeof data.is_active === 'boolean' ? data.is_active : true,
-          category: data.category === 'girls' || data.category === 'couples' ? data.category : undefined,
+          category: data.category === 'girls' ? data.category : undefined,
           created_at: data.created_at || new Date(),
         };
       });
@@ -123,7 +118,7 @@ export async function saveCreatorDoc(data: {
   id?: string;
   username: string;
   avatarUrl?: string;
-  category?: 'girls' | 'couples';
+  category?: 'girls';
 }): Promise<string> {
   const username = data.username.trim();
   if (!username) throw new Error('Username is required');
@@ -136,7 +131,7 @@ export async function saveCreatorDoc(data: {
     is_active: true,
   };
   // Only written when explicitly chosen — legacy docs without a group stay untouched.
-  if (data.category === 'girls' || data.category === 'couples') {
+  if (data.category === 'girls') {
     payload.category = data.category;
   }
   // Only stamp created_at on create — edits must not reset the join date.

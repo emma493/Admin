@@ -11,7 +11,7 @@ Usage:
 
 Output matches Admin trend-corpus.json entry shape:
     {"caption": str, "hashtags": [str...], "weight": 1-3, "source": domain}
-Split into girls/couples by keyword match. Review the file, then merge the
+All entries categorized as girls. Review the file, then merge the
 best entries into src/lib/trend-corpus.json (never auto-overwrites it).
 """
 import argparse
@@ -80,8 +80,7 @@ def clean(text: str, limit: int = 120) -> str:
 
 
 def categorize(caption: str, tags: list) -> str:
-    blob = caption + " " + " ".join(tags)
-    return "couples" if COUPLE_WORDS.search(blob) else "girls"
+    return "girls"
 
 
 def weight_for(score: int) -> int:
@@ -211,13 +210,11 @@ def main() -> int:
         if key not in best or r["weight"] > best[key]["weight"]:
             best[key] = r
     girls = [v for v in best.values() if categorize(v["caption"], v["hashtags"]) == "girls"]
-    couples = [v for v in best.values() if categorize(v["caption"], v["hashtags"]) == "couples"]
     girls.sort(key=lambda r: -r["weight"])
-    couples.sort(key=lambda r: -r["weight"])
 
-    OUT_FILE.write_text(json.dumps({"girls": girls, "couples": couples}, indent=2), encoding="utf-8")
+    OUT_FILE.write_text(json.dumps({"girls": girls}, indent=2), encoding="utf-8")
     print(f"[done] ok={stats['ok']} fail={stats['fail']} empty={stats['empty']} "
-          f"girls={len(girls)} couples={len(couples)} -> {OUT_FILE}", flush=True)
+          f"girls={len(girls)} -> {OUT_FILE}", flush=True)
     for err in stats["errors"][:20]:
         print(f"[warn] {err}", flush=True)
     return 0

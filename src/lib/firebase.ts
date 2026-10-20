@@ -320,7 +320,7 @@ export async function updateVideoCreator(videoId: string, creatorId: string | nu
  * Set a video's group label. Merge-safe single field — never touches views,
  * likes, captions or linkage. Used by the legacy review queue backfill.
  */
-export async function updateVideoCategory(videoId: string, category: 'girls' | 'couples'): Promise<void> {
+export async function updateVideoCategory(videoId: string, category: 'girls'): Promise<void> {
   if (!videoId) return;
   try {
     const docRef = doc(db, VIDEOS_COLLECTION, videoId);

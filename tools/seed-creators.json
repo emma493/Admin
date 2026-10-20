@@ -13,20 +13,5 @@
   { "id": "seed-girls-12", "username": "ChloeKate", "category": "girls" },
   { "id": "seed-girls-13", "username": "RileyQuinn", "category": "girls" },
   { "id": "seed-girls-14", "username": "ZoeyAnn", "category": "girls" },
-  { "id": "seed-girls-15", "username": "NoraJane", "category": "girls" },
-  { "id": "seed-couples-01", "username": "MiaAndLeo", "category": "couples" },
-  { "id": "seed-couples-02", "username": "AvaAndMilo", "category": "couples" },
-  { "id": "seed-couples-03", "username": "EmmaAndNoah", "category": "couples" },
-  { "id": "seed-couples-04", "username": "SophiaAndLiam", "category": "couples" },
-  { "id": "seed-couples-05", "username": "IsabellaAndEli", "category": "couples" },
-  { "id": "seed-couples-06", "username": "LilyAndFinn", "category": "couples" },
-  { "id": "seed-couples-07", "username": "ChloeAndKai", "category": "couples" },
-  { "id": "seed-couples-08", "username": "HarperAndJay", "category": "couples" },
-  { "id": "seed-couples-09", "username": "EllaAndCole", "category": "couples" },
-  { "id": "seed-couples-10", "username": "GraceAndReed", "category": "couples" },
-  { "id": "seed-couples-11", "username": "ZoeyAndReese", "category": "couples" },
-  { "id": "seed-couples-12", "username": "RileyAndRowan", "category": "couples" },
-  { "id": "seed-couples-13", "username": "NoraAndJude", "category": "couples" },
-  { "id": "seed-couples-14", "username": "StellaAndCrew", "category": "couples" },
-  { "id": "seed-couples-15", "username": "RubyAndBlake", "category": "couples" }
+  { "id": "seed-girls-15", "username": "NoraJane", "category": "girls" }
 ]

@@ -63,11 +63,10 @@ const CreatorPick = memo(function CreatorPick({
       {badge && (
         <span
           className="text-[11px] font-black uppercase tracking-[0.1em] px-2 py-0.5 rounded-full shrink-0"
-          style={
-            badge === 'Couples'
-              ? { background: 'rgba(168,85,247,0.15)', color: '#c4b5fd' }
-              : { background: 'rgba(255,43,85,0.12)', color: '#ff8fa3' }
-          }
+          style={{
+            background: 'rgba(255,43,85,0.12)',
+            color: '#ff8fa3',
+          }}
           title={`${badge} group`}
         >
           {badge}
@@ -124,38 +123,34 @@ export default function UploadPage() {
   // explicit choice wins, otherwise video majority). Previously this passed
   // 0/0, so ungrouped creators showed no badge and silently skipped the guard.
   const countsByCreator = useMemo(() => {
-    const counts = new Map<string, { girls: number; couples: number }>();
+    const counts = new Map<string, { girls: number }>();
     for (const v of videoList) {
       if (!v.creatorId) continue;
-      if (v.category !== 'girls' && v.category !== 'couples') continue;
-      const cur = counts.get(v.creatorId) ?? { girls: 0, couples: 0 };
-      if (v.category === 'girls') cur.girls += 1;
-      else cur.couples += 1;
+      if (v.category !== 'girls') continue;
+      const cur = counts.get(v.creatorId) ?? { girls: 0 };
+      cur.girls += 1;
       counts.set(v.creatorId, cur);
     }
     return counts;
   }, [videoList]);
 
   const groupOf = (c: CreatorDocument): CreatorBadge => {
-    const counts = countsByCreator.get(c.id) ?? { girls: 0, couples: 0 };
-    return resolveCreatorBadge(c.category, counts.girls, counts.couples);
+    const counts = countsByCreator.get(c.id) ?? { girls: 0 };
+    return resolveCreatorBadge(c.category, counts.girls);
   };
 
   // Auto-default the batch group to the majority of selected creators'
-  // resolved badges (ties / all-unknown keep the current value).
+  // resolved badges (no girls found keeps the current value).
   useEffect(() => {
     if (touchedGroup || selected.length === 0) return;
     let girls = 0;
-    let couples = 0;
     for (const id of selected) {
       const c = creators.find((x) => x.id === id);
       if (!c) continue;
       const g = groupOf(c);
       if (g === 'Girls') girls += 1;
-      else if (g === 'Couples') couples += 1;
     }
-    const majority: VideoCategory | null =
-      girls > couples ? 'girls' : couples > girls ? 'couples' : null;
+    const majority: VideoCategory | null = girls > 0 ? 'girls' : null;
     if (majority && majority !== category) setCategory(majority);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selected, creators, countsByCreator, touchedGroup]);
@@ -251,25 +246,22 @@ export default function UploadPage() {
         <section className="rounded-[14px] p-5" style={surface}>
           <h2 className="text-white text-[14px] font-bold mb-3">2 · Group</h2>
           <div className="flex gap-2">
-            {(['girls', 'couples'] as VideoCategory[]).map((g) => (
-              <button
-                key={g}
-                type="button"
-                onClick={() => {
-                  setCategory(g);
-                  setTouchedGroup(true);
-                }}
-                aria-pressed={category === g}
-                className="px-5 py-2.5 rounded-[10px] text-[14px] font-bold capitalize transition-colors"
-                style={
-                  category === g
-                    ? { background: '#FF2B55', color: '#fff' }
-                    : { background: '#16171D', color: '#A1A2A7', border: '1px solid rgba(255,255,255,0.1)' }
-                }
-              >
-                {g}
-              </button>
-            ))}
+            <button
+              type="button"
+              onClick={() => {
+                setCategory('girls');
+                setTouchedGroup(true);
+              }}
+              aria-pressed={category === 'girls'}
+              className="px-5 py-2.5 rounded-[10px] text-[14px] font-bold capitalize transition-colors"
+              style={
+                category === 'girls'
+                  ? { background: '#FF2B55', color: '#fff' }
+                  : { background: '#16171D', color: '#A1A2A7', border: '1px solid rgba(255,255,255,0.1)' }
+              }
+            >
+              Girls
+            </button>
           </div>
         </section>
 

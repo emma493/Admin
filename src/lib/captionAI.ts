@@ -71,37 +71,15 @@ const GIRLS_CAPTIONS = [
   'The confidence in this one',
 ];
 
-const COUPLES_CAPTIONS = [
-  'POV: couple goals unlocked',
-  'Wait for their reaction',
-  'Rate this duo 1-10',
-  'POV: date night done right',
-  'Straight facts only',
-  'Watch how they move together',
-  'POV: when you find your person',
-  'This duo never misses',
-  'Reply with your favorite couple',
-  'POV: sunday cuddles hit different',
-  'Part 1 — couples edition',
-  'The chemistry in this one',
-];
-
 // Niche tags mined 2026-09-25 from 238 crawled titles (tools/crawl_trends.py
 // + merge_corpus.py keyword mining), extended 2026-09-25 from the 1531-title
-// trend_crawler.py run (+#redhead/#curvy girls, +#amateur/#kiss/#tattoo
-// couples). Only brand-safe tags kept — explicit scene titles were rejected
-// as captions, their niche keywords became tags.
+// trend_crawler.py run. Only brand-safe tags kept — explicit scene titles were
+// rejected as captions, their niche keywords became tags.
 const GIRLS_TAGS = [
   '#fyp', '#viral', '#trending', '#tiktok', '#foryou', '#dance', '#trend',
   '#solo', '#amateur', '#girls', '#beauty', '#fitcheck', '#transition',
   '#pov', '#shortxx', '#brunette', '#blonde', '#dancing', '#natural',
   '#tattoo', '#cute', '#redhead', '#curvy',
-];
-
-const COUPLES_TAGS = [
-  '#fyp', '#viral', '#trending', '#tiktok', '#foryou', '#couples', '#couplegoals',
-  '#straight', '#duo', '#love', '#datenight', '#relationship', '#cute',
-  '#pov', '#shortxx', '#amateur', '#kiss', '#tattoo',
 ];
 
 export interface CaptionSuggestion {
@@ -126,8 +104,8 @@ export function suggestFor(category: VideoCategory, index: number, salt = 0): Ca
     const times = Math.min(3, Math.max(1, e.weight ?? 1));
     for (let k = 0; k < times; k++) pool.push({ caption: e.caption, hashtags: e.hashtags });
   }
-  const captions = category === 'couples' ? COUPLES_CAPTIONS : GIRLS_CAPTIONS;
-  const tags = category === 'couples' ? COUPLES_TAGS : GIRLS_TAGS;
+  const captions = GIRLS_CAPTIONS;
+  const tags = GIRLS_TAGS;
   for (let k = 0; k < captions.length; k++) {
     pool.push({
       caption: captions[k],
