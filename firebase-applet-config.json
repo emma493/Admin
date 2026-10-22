@@ -1,9 +1,9 @@
 {
-  "projectId": "shortxx-app",
-  "appId": "1:533200613394:web:90313909fd25237942a8cb",
-  "apiKey": "AIzaSyAcmxtdjT80jKyq4vuC0z6sd9AfS2zGE0w",
-  "authDomain": "shortxx-app.firebaseapp.com",
-  "storageBucket": "shortxx-app.firebasestorage.app",
-  "messagingSenderId": "533200613394",
-  "measurementId": "G-9MZN5BXC0X"
+  "projectId": "favmonet-db",
+  "appId": "1:630330299831:web:d47d35d35c7c8a2aa30432",
+  "apiKey": "AIzaSyDcn9_XoHec87DSdfmvW4zPGUGyuK1vUqA",
+  "authDomain": "favmonet-db.firebaseapp.com",
+  "storageBucket": "favmonet-db.firebasestorage.app",
+  "messagingSenderId": "630330299831",
+  "measurementId": "G-E3R4VYDCPJ"
 }
